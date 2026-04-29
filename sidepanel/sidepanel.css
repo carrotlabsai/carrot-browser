@@ -1,0 +1,403 @@
+/* =============================================================================
+   Carrot — Side Panel
+   Flat surfaces, generous whitespace, soft type. No gradients.
+   ============================================================================= */
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background: var(--surface-0);
+  overflow: hidden;
+}
+
+.sp-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* =============================================================================
+   Header — three slots: status dot · brand · settings
+   Title lives here so the body can be all action.
+   ============================================================================= */
+
+.sp-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-0) 84%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  flex-shrink: 0;
+}
+
+.sp-status-dot {
+  display: inline-flex;
+  align-items: center;
+  width: 16px;
+  height: 16px;
+  justify-content: center;
+}
+
+.sp-brand {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0;
+  user-select: none;
+}
+
+.sp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  background: transparent;
+  transition: background var(--duration-fast) var(--ease-out-expo),
+    color var(--duration-fast) var(--ease-out-expo);
+}
+
+.sp-icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+/* =============================================================================
+   Main scroll container
+   ============================================================================= */
+
+.sp-main {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Every card holds its own height so no panel squeezes another. */
+.sp-main > section {
+  flex-shrink: 0;
+}
+
+/* =============================================================================
+   Idle vs. active visibility
+   - Idle: only pairing card is rendered.
+   - Active: pairing card with connected agents, then activity.
+   ============================================================================= */
+
+.sp-shell:not(.is-active) .sp-activity-card {
+  display: none;
+}
+
+/* CSS order: pairing + connected agents, then activity. */
+.sp-pairing-card     { order: 1; }
+.sp-activity-card    { order: 2; }
+
+/* =============================================================================
+   Pairing card
+   ============================================================================= */
+
+.sp-pairing-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface-1);
+  animation: cl-fade-in var(--duration-base) var(--ease-out-expo) both;
+}
+
+/* Idle: subtle gold accent on the border so the eye finds the CTA without
+   needing a tinted background. */
+.sp-shell:not(.is-active) .sp-pairing-card {
+  border-color: color-mix(in srgb, var(--gold) 28%, var(--border-subtle));
+}
+
+.sp-scope-field {
+  position: relative;
+}
+
+.sp-scope-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gold-text);
+  background: var(--gold-soft);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.sp-scope-select {
+  min-height: 44px;
+  padding-left: 44px;
+  background-color: var(--surface-2);
+  border-color: color-mix(in srgb, var(--gold) 22%, var(--border-default));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+
+.sp-scope-select:hover {
+  border-color: color-mix(in srgb, var(--gold) 36%, var(--border-strong));
+  background-color: var(--surface-3);
+}
+
+.sp-cta {
+  width: 100%;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+
+.sp-cta svg {
+  transition: transform var(--duration-base) var(--ease-spring);
+}
+
+.sp-cta:hover svg {
+  transform: translateX(3px);
+}
+
+.sp-shell:not(.is-active) .sp-cta {
+  padding: 14px 18px;
+}
+
+/* =============================================================================
+   Activity feed
+   ============================================================================= */
+
+.sp-activity-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.sp-clear {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  transition: color var(--duration-fast) var(--ease-out-expo),
+    background var(--duration-fast) var(--ease-out-expo);
+}
+
+.sp-clear:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+.sp-activity {
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.sp-activity-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  animation: sp-row-in 360ms var(--ease-out-expo) both;
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+@keyframes sp-row-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.sp-activity-row:last-child {
+  border-bottom: none;
+}
+
+.sp-activity-row.is-new {
+  background: var(--gold-soft);
+  border-radius: var(--radius-sm);
+  animation: sp-row-highlight 1200ms var(--ease-out-expo) forwards;
+}
+
+@keyframes sp-row-highlight {
+  0%   { background: var(--gold-soft); }
+  100% { background: transparent; }
+}
+
+.sp-activity-icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--gold-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.sp-activity-icon.is-error {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+  color: var(--error);
+}
+
+.sp-activity-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.sp-activity-action {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sp-activity-action > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sp-activity-time {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.sp-activity-agent {
+  min-width: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.sp-activity-detail {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+/* =============================================================================
+   Pairing code display (flat, no gradients)
+   ============================================================================= */
+
+.sp-code {
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  border: 1px dashed color-mix(in srgb, var(--gold) 40%, var(--border-default));
+  text-align: center;
+  animation: cl-fade-in 320ms var(--ease-out-expo) both;
+}
+
+.sp-code.is-claimed {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border-default));
+  background: color-mix(in srgb, var(--success) 10%, var(--surface-2));
+}
+
+.sp-code-value {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--gold-text);
+  padding: 4px 0;
+}
+
+.sp-code.is-claimed .sp-code-value {
+  color: var(--success);
+  letter-spacing: 0.02em;
+  font-size: 20px;
+}
+
+.sp-code-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+#copyCode {
+  width: 100%;
+  margin-top: 10px;
+}
+
+/* =============================================================================
+   Sessions list
+   ============================================================================= */
+
+.sp-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sp-agent-stack {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sp-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  animation: cl-fade-in var(--duration-base) var(--ease-out-expo) both;
+}
+
+.sp-session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sp-session-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sp-session-meta {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 1px;
+}

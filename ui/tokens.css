@@ -1,0 +1,433 @@
+/* =============================================================================
+   Carrot Labs — Design Tokens
+   Black + gold, premium, minimal. Dark mode is the default; light mode follows
+   prefers-color-scheme so the UI always matches the user's Chrome theme.
+   ============================================================================= */
+
+:root {
+  color-scheme: dark light;
+
+  /* Surfaces — pure black through elevated greys */
+  --surface-0: #0a0a0a;
+  --surface-1: #111111;
+  --surface-2: #1a1a1a;
+  --surface-3: #242424;
+  --surface-hover: #2a2a2a;
+
+  /* Hairlines */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  /* Carrot gold — straight from brand SVG */
+  --gold: #facd2a;
+  --gold-bright: #ffd94a;
+  --gold-muted: #c9a41f;
+  --gold-glow: rgba(250, 205, 42, 0.35);
+  --gold-soft: rgba(250, 205, 42, 0.12);
+
+  /* Logo color — follows theme so the carrot mark reads against its surface */
+  --logo-color: var(--gold);
+
+  /* Gold used as text/icon foreground — tuned per theme for contrast */
+  --gold-text: var(--gold);
+
+  /* Text */
+  --text-primary: #f5f5f5;
+  --text-secondary: #a8a8a8;
+  --text-muted: #6b6b6b;
+  --text-inverted: #0a0a0a;
+
+  /* Semantic */
+  --success: #4ade80;
+  --success-glow: rgba(74, 222, 128, 0.2);
+  --error: #f87171;
+  --warning: #fbbf24;
+
+
+  /* Typography — soft, rounded humanist stack. SF Pro Rounded on Apple,
+     graceful fallbacks elsewhere. */
+  --font-sans: ui-rounded, "SF Pro Rounded", -apple-system,
+    BlinkMacSystemFont, system-ui, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas,
+    monospace;
+
+  /* Radii */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* Shadow — warm gold halos */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-gold: 0 0 0 1px var(--gold-soft), 0 8px 24px var(--gold-glow);
+
+  /* Motion — Framer-style springy easings */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-soft: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+  --duration-fast: 150ms;
+  --duration-base: 240ms;
+  --duration-slow: 420ms;
+}
+
+/* =============================================================================
+   Light mode — follows the user's Chrome theme automatically.
+   Gold stays the brand color; surfaces invert; the carrot mark switches to
+   black (`--logo-color`) so it reads against pale surfaces.
+   ============================================================================= */
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --surface-0: #fafafa;
+    --surface-1: #ffffff;
+    --surface-2: #f4f4f5;
+    --surface-3: #e7e7ea;
+    --surface-hover: #dcdce0;
+
+    --border-subtle: rgba(15, 15, 15, 0.06);
+    --border-default: rgba(15, 15, 15, 0.1);
+    --border-strong: rgba(15, 15, 15, 0.16);
+
+    /* Deeper gold variants for legibility on light surfaces; `--gold` itself
+       stays brand-exact so buttons and the hero mark remain unmistakable. */
+    --gold: #facd2a;
+    --gold-bright: #e8b400;
+    --gold-muted: #a67e00;
+    --gold-glow: rgba(230, 180, 0, 0.28);
+    --gold-soft: rgba(250, 205, 42, 0.18);
+
+    --logo-color: #0a0a0a;
+    --gold-text: #a67e00;
+
+    --text-primary: #0a0a0a;
+    --text-secondary: #515157;
+    --text-muted: #8a8a92;
+    --text-inverted: #0a0a0a;
+
+    --success: #16a34a;
+    --success-glow: rgba(22, 163, 74, 0.18);
+    --error: #dc2626;
+
+    --shadow-sm: 0 1px 2px rgba(15, 15, 15, 0.05);
+    --shadow-md: 0 4px 14px rgba(15, 15, 15, 0.08);
+    --shadow-lg: 0 20px 48px rgba(15, 15, 15, 0.12);
+  }
+}
+
+/* =============================================================================
+   Base reset
+   ============================================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--gold-text);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-out-expo);
+}
+
+a:hover {
+  color: var(--gold-bright);
+}
+
+/* =============================================================================
+   Primitive components
+   ============================================================================= */
+
+.cl-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  transition: border-color var(--duration-base) var(--ease-out-expo),
+    transform var(--duration-base) var(--ease-out-expo);
+}
+
+.cl-card:hover {
+  border-color: var(--border-default);
+}
+
+.cl-card-title {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: transform var(--duration-fast) var(--ease-spring),
+    background var(--duration-fast) var(--ease-out-expo),
+    box-shadow var(--duration-fast) var(--ease-out-expo),
+    color var(--duration-fast) var(--ease-out-expo);
+  user-select: none;
+}
+
+.cl-btn:active {
+  transform: scale(0.97);
+}
+
+.cl-btn-primary {
+  background: var(--gold);
+  color: var(--text-inverted);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), var(--shadow-sm);
+}
+
+.cl-btn-primary:hover {
+  background: var(--gold-bright);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 4px 14px var(--gold-glow);
+}
+
+.cl-btn-secondary {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+
+.cl-btn-secondary:hover {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
+.cl-btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.cl-btn-ghost:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.cl-btn-danger {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.cl-btn-danger:hover {
+  background: rgba(248, 113, 113, 0.08);
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.cl-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease-out-expo),
+    box-shadow var(--duration-fast) var(--ease-out-expo);
+}
+
+.cl-input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+
+.cl-select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a8a8a8' d='M6 8.5L2 4.5h8z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+  cursor: pointer;
+}
+
+.cl-select:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+
+.cl-checkbox {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  cursor: pointer;
+  position: relative;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+  flex-shrink: 0;
+}
+
+.cl-checkbox:checked {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+.cl-checkbox:checked::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--text-inverted);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.cl-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--error);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.cl-dot.on {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-glow);
+}
+
+.cl-dot.on::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid var(--success);
+  animation: cl-pulse 2s var(--ease-out-expo) infinite;
+}
+
+/* =============================================================================
+   Keyframes
+   ============================================================================= */
+
+@keyframes cl-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+@keyframes cl-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cl-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes cl-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.cl-fade-in {
+  animation: cl-fade-in var(--duration-base) var(--ease-out-expo) both;
+}
+
+.cl-slide-in {
+  animation: cl-slide-in var(--duration-slow) var(--ease-spring) both;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface-hover);
+}

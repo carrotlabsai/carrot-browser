@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Carrot — Settings</title>
+  <link rel="stylesheet" href="ui/tokens.css" />
+  <style>
+    body {
+      min-height: 100vh;
+      padding: 64px 24px 80px;
+      overflow-x: hidden;
+    }
+    .shell {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    .header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 36px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    .header-title { font-size: 22px; font-weight: 600; letter-spacing: -0.005em; }
+    .header-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      margin-top: 4px;
+    }
+    .header-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-pill);
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+    }
+
+    .card {
+      background: var(--surface-1);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      margin-bottom: 18px;
+      animation: cl-fade-in var(--duration-base) var(--ease-out-expo) both;
+    }
+    .card-title {
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+    .field-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .hint {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+    .hint code {
+      font-family: var(--font-mono);
+      background: var(--surface-2);
+      padding: 1px 6px;
+      border-radius: var(--radius-xs);
+      color: var(--gold-text);
+      font-size: 11px;
+    }
+    .status-msg {
+      margin-top: 14px;
+      font-size: 12px;
+      min-height: 18px;
+    }
+    .status-msg.ok { color: var(--success); }
+    .status-msg.err { color: var(--error); }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-label { color: var(--text-muted); font-size: 12px; }
+    .info-value {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-primary);
+      max-width: 360px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle-row + .hint { padding-left: 28px; margin-top: 0; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="header">
+      <div class="header-left">
+        <div id="logoSlot"></div>
+        <div>
+          <div class="header-title">Settings</div>
+          <div class="header-subtitle">Carrot Labs</div>
+        </div>
+      </div>
+      <div class="header-pill" id="versionPill">v0.3.1</div>
+    </div>
+
+    <section class="card">
+      <div class="card-title">Bridge Server</div>
+      <label class="field-label" for="serverUrl">Server URL</label>
+      <input class="cl-input" type="url" id="serverUrl" placeholder="https://browser.carrotlabs.ai" />
+      <p class="hint">
+        Hosted (default): <code>https://browser.carrotlabs.ai</code><br />
+        Local dev: <code>http://127.0.0.1:7777</code>
+      </p>
+      <div class="row">
+        <button class="cl-btn cl-btn-primary" id="save">Save Changes</button>
+        <button class="cl-btn cl-btn-secondary" id="test">Test Connection</button>
+      </div>
+      <div class="status-msg" id="statusMsg"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">Browser Identity</div>
+      <div class="info-row">
+        <span class="info-label">Browser ID</span>
+        <span class="info-value" id="browserId">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Connection Mode</span>
+        <span class="info-value" id="connMode">—</span>
+      </div>
+      <p class="hint">
+        This ID uniquely identifies your browser to the bridge server. It was
+        generated on first connection and is stored locally.
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="card-title">Advanced</div>
+      <label class="toggle-row">
+        <input type="checkbox" class="cl-checkbox" id="useWs" checked />
+        <span>
+          <div style="color: var(--text-primary); font-size: 13px; font-weight: 500;">
+            Use WebSocket connection
+          </div>
+          <div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">
+            Recommended for cloud servers. Disable for HTTP polling fallback.
+          </div>
+        </span>
+      </label>
+      <div class="row">
+        <button class="cl-btn cl-btn-secondary" id="resetId">Reset Browser Identity</button>
+      </div>
+      <p class="hint">
+        Generates a new browser ID and token. All active agent sessions will be
+        invalidated.
+      </p>
+    </section>
+  </div>
+
+  <script type="module" src="options-init.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

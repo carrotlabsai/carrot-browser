@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "Carrot",
+  "version": "0.4.3",
+  "description": "The bridge between AI agents and your browser. By Carrot Labs.",
+  "author": "Carrot Labs",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "windows",
+    "alarms",
+    "tabGroups",
+    "history",
+    "bookmarks",
+    "downloads",
+    "notifications",
+    "storage",
+    "sidePanel",
+    "debugger"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:*/*",
+    "http://localhost:*/*",
+    "https://browser.carrotlabs.ai/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Carrot — open live panel",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "32": "assets/icons/icon-32.png",
+      "48": "assets/icons/icon-48.png",
+      "128": "assets/icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/logo/*", "ui/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
