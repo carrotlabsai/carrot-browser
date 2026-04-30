@@ -2,8 +2,9 @@
   "manifest_version": 3,
   "name": "Carrot",
   "version": "0.4.4",
-  "description": "The bridge between AI agents and your browser. By Carrot Labs.",
+  "description": "The open-source and secure bridge between AI agents and your browser. Source: github.com/carrotlabsai/carrot-browser",
   "author": "Carrot Labs",
+  "homepage_url": "https://github.com/carrotlabsai/carrot-browser",
   "permissions": [
     "activeTab",
     "scripting",
@@ -21,8 +22,8 @@
   ],
   "host_permissions": [
     "<all_urls>",
-    "http://127.0.0.1:*/*",
-    "http://localhost:*/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*",
     "https://browser.carrotlabs.ai/*"
   ],
   "background": {

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import os
 import secrets
@@ -30,6 +31,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Query
@@ -756,6 +758,99 @@ async def llms_txt():
     return LLMS_TXT
 
 
+def _privacy_markdown() -> str:
+    return (Path(__file__).with_name("PRIVACY.md")).read_text(encoding="utf-8")
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy():
+    policy = html.escape(_privacy_markdown())
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Carrot Browser Privacy Policy</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #fafafa;
+      --card: #ffffff;
+      --text: #121212;
+      --muted: #5f5f64;
+      --border: rgba(15, 15, 15, 0.1);
+      --gold: #a67e00;
+    }}
+    @media (prefers-color-scheme: dark) {{
+      :root {{
+        --bg: #090909;
+        --card: #111111;
+        --text: #f5f5f5;
+        --muted: #a8a8a8;
+        --border: rgba(255, 255, 255, 0.1);
+        --gold: #facd2a;
+      }}
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 32px 18px 64px;
+    }}
+    main {{
+      width: min(860px, 100%);
+      margin: 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      background: var(--card);
+      padding: clamp(22px, 5vw, 44px);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.08);
+    }}
+    nav {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 28px;
+    }}
+    a {{
+      color: var(--gold);
+      text-decoration: none;
+      font-weight: 600;
+    }}
+    a:hover {{ text-decoration: underline; }}
+    pre {{
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: inherit;
+      color: var(--text);
+    }}
+    code {{
+      color: var(--gold);
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <nav aria-label="Policy links">
+      <a href="https://github.com/carrotlabsai/carrot-browser/blob/main/PRIVACY.md">Open-source policy source</a>
+      <a href="https://github.com/carrotlabsai/carrot-browser">GitHub repository</a>
+      <a href="/">Bridge status</a>
+    </nav>
+    <pre>{policy}</pre>
+  </main>
+</body>
+</html>"""
+
+
+@app.get("/privacy.md", response_class=PlainTextResponse)
+async def privacy_markdown():
+    return _privacy_markdown()
+
+
 async def _public_stats() -> dict[str, Any]:
     now = time.time()
     async with _lock:
@@ -779,6 +874,7 @@ async def _public_stats() -> dict[str, Any]:
         "auth_required": not NO_AUTH,
         "mcp_endpoint": "/mcp",
         "llms_txt": "/llms.txt",
+        "privacy_policy": "/privacy",
     }
 
 
@@ -891,6 +987,7 @@ async def root():
     <nav class="links" aria-label="Service links">
       <a href="/llms.txt">llms.txt</a>
       <a href="/status">status JSON</a>
+      <a href="/privacy">privacy policy</a>
       <a href="/mcp">MCP endpoint</a>
       <a href="https://carrotlabs.ai">Carrot Labs</a>
     </nav>

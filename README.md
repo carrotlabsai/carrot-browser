@@ -288,6 +288,18 @@ You can use the hosted bridge at `https://browser.carrotlabs.ai` if you do not
 want to run infrastructure. To run your own bridge instead, run the included
 `server.py` app locally or on infrastructure you control.
 
+### Docker
+
+```bash
+docker build -t carrot-browser-bridge .
+docker run --rm -p 8080:8080 carrot-browser-bridge
+```
+
+Then open the extension options and set the Server URL to
+`http://127.0.0.1:8080`.
+
+See [DEPLOY.md](DEPLOY.md) for Fly.io and production deployment notes.
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -313,7 +325,11 @@ carrot-extension/
     logo/                 Brand SVG and PNG marks
     icons/                Toolbar icons (16 / 32 / 48 / 128)
   server.py               Bridge server (FastAPI + uvicorn)
+  Dockerfile              Self-hostable bridge container
+  PRIVACY.md              Canonical open-source privacy policy
+  DEPLOY.md               Self-hosting and deployment notes
   requirements.txt        Python dependencies
+  deploy/                 Example deployment configs
   mcp-server/             FastMCP wrapper for MCP clients
 ```
 
