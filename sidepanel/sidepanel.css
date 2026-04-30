@@ -141,8 +141,13 @@ body {
   justify-content: center;
   color: var(--gold-text);
   background: var(--gold-soft);
-  font-size: 12px;
   pointer-events: none;
+}
+
+.sp-scope-icon svg {
+  width: 13px;
+  height: 13px;
+  display: block;
 }
 
 .sp-scope-select {

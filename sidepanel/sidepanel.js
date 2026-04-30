@@ -42,30 +42,73 @@ let codeHideTimer = null;
 
 async function loadScopeOptions() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = await getCurrentPanelTab();
     if (!tab) return;
-    const existing = Array.from(scopeSelect.options).map((o) => o.value);
-    if (!existing.includes(`tab:${tab.id}`)) {
-      const tabOpt = document.createElement("option");
-      tabOpt.value = `tab:${tab.id}`;
-      tabOpt.textContent = `This tab · ${truncate(tab.title || "", 30)}`;
-      scopeSelect.insertBefore(tabOpt, scopeSelect.firstChild);
+    updateScopeOptionsForTab(tab);
+  } catch {}
+}
 
-      const winOpt = document.createElement("option");
-      winOpt.value = `window:${tab.windowId}`;
-      winOpt.textContent = "This window · active window";
-      scopeSelect.insertBefore(winOpt, scopeSelect.children[1]);
-      scopeSelect.selectedIndex = 0;
-      updateScopeIcon();
+function updateScopeOptionsForTab(tab) {
+  const previousValue = scopeSelect.value;
+  const previousKind = scopeKind(previousValue);
+  const hadDynamicScope = Array.from(scopeSelect.options).some((o) => scopeKind(o.value) !== "static");
+
+  removeDynamicScopeOptions();
+
+  const tabOpt = document.createElement("option");
+  tabOpt.value = `tab:${tab.id}`;
+  tabOpt.textContent = `This tab · ${truncate(tab.title || "", 30)}`;
+  scopeSelect.insertBefore(tabOpt, scopeSelect.firstChild);
+
+  const winOpt = document.createElement("option");
+  winOpt.value = `window:${tab.windowId}`;
+  winOpt.textContent = "This window · active window";
+  scopeSelect.insertBefore(winOpt, scopeSelect.children[1]);
+
+  if (previousKind === "static" && hadDynamicScope) {
+    scopeSelect.value = previousValue;
+  } else if (previousKind === "window") {
+    scopeSelect.value = winOpt.value;
+  } else {
+    scopeSelect.value = tabOpt.value;
+  }
+  updateScopeIcon();
+}
+
+async function getCurrentPanelTab() {
+  try {
+    const currentWindow = await chrome.windows.getCurrent();
+    if (currentWindow?.id != null) {
+      const [tab] = await chrome.tabs.query({ active: true, windowId: currentWindow.id });
+      if (tab) return tab;
     }
   } catch {}
+
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return tab;
+}
+
+function removeDynamicScopeOptions() {
+  for (const option of Array.from(scopeSelect.options)) {
+    if (scopeKind(option.value) !== "static") option.remove();
+  }
+}
+
+function scopeKind(value) {
+  if (value.startsWith("tab:")) return "tab";
+  if (value.startsWith("window:")) return "window";
+  return "static";
 }
 
 function updateScopeIcon() {
   const value = scopeSelect.value;
-  if (value.startsWith("tab:")) scopeIcon.textContent = "📄";
-  else if (value.startsWith("window:")) scopeIcon.textContent = "🪟";
-  else scopeIcon.textContent = "🌐";
+  scopeIcon.replaceChildren(getScopeIcon(value));
+}
+
+function getScopeIcon(value) {
+  if (value.startsWith("tab:")) return iconTabScope();
+  if (value.startsWith("window:")) return iconWindowScope();
+  return iconBrowserScope();
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +345,9 @@ chrome.runtime.onMessage.addListener((msg) => {
     case "carrot_activity_clear":
       clearActivity();
       break;
+    case "scope_tab_changed":
+      if (msg.tab) updateScopeOptionsForTab(msg.tab);
+      break;
   }
 });
 
@@ -458,6 +504,15 @@ function iconX() {
 }
 function iconCode() {
   return svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>');
+}
+function iconTabScope() {
+  return svg('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/>');
+}
+function iconWindowScope() {
+  return svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/><path d="M8 5v4"/>');
+}
+function iconBrowserScope() {
+  return svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13 13 0 0 1 0 18"/><path d="M12 3a13 13 0 0 0 0 18"/>');
 }
 function iconSpark() {
   return svg(

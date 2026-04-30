@@ -404,6 +404,29 @@ function broadcastActivity(entry) {
   } catch {}
 }
 
+function broadcastScopeTab(tab) {
+  try {
+    chrome.runtime
+      .sendMessage({ type: "scope_tab_changed", tab: summarizeTab(tab) })
+      .catch(() => {});
+  } catch {}
+}
+
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    broadcastScopeTab(tab);
+  } catch {}
+});
+
+chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
+  if (!tab.active || (!changeInfo.title && changeInfo.status !== "complete")) return;
+  try {
+    const win = await chrome.windows.get(tab.windowId);
+    if (win?.focused) broadcastScopeTab(tab);
+  } catch {}
+});
+
 async function markTabControlled(tabId, actionLabel) {
   if (!tabId) return;
   let info = controlledTabs.get(tabId);
