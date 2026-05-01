@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Carrot MCP Server — exposes the Carrot Bridge as MCP tools.
+Carrot Standalone MCP Adapter — exposes a Carrot Bridge as MCP tools.
 
 Wraps the Carrot Bridge HTTP API so any MCP client (Claude Code, Cursor, etc.)
 can control Chrome via standard MCP tool calls.
 
-Supports both local and cloud bridge servers with optional authentication.
+This is optional client-side adapter plumbing. The main bridge server in
+../server.py already exposes MCP directly at /mcp. Use this adapter for MCP
+clients that need a local stdio/SSE process pointed at any bridge URL.
 
 Env vars:
     CARROT_BRIDGE_URL      — bridge server URL (default: http://127.0.0.1:7777)
-    CARROT_SESSION_TOKEN   — session token for authenticated access (cloud mode)
+    CARROT_SESSION_TOKEN   — session token for authenticated access
 
 Run this MCP server:
     python server.py          # stdio (default)

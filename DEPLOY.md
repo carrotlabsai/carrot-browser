@@ -1,7 +1,8 @@
 # Deploying Carrot Browser Bridge
 
-Carrot includes a Dockerfile for self-hosting the bridge server. The hosted
-bridge at `https://browser.carrotlabs.ai` runs the same open-source server code.
+Carrot includes a Dockerfile for running the bridge server anywhere. The
+community-hosted bridge at `https://browser.carrotlabs.ai` is one instance of
+the same open-source `server.py` that you can run yourself.
 
 ## Docker
 
@@ -31,9 +32,9 @@ fly launch --no-deploy
 fly deploy
 ```
 
-The production Carrot Labs Fly app config is intentionally not committed here,
-so self-hosters do not accidentally deploy to or depend on the hosted
-`carrot-bridge` app.
+The Carrot Labs Fly app config for `https://browser.carrotlabs.ai` is
+intentionally not committed here, so other operators do not accidentally deploy
+to or depend on that hosted `carrot-bridge` app.
 
 ## Notes
 

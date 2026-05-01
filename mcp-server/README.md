@@ -1,10 +1,17 @@
-# Carrot MCP Server
+# Carrot Standalone MCP Adapter
 
-MCP server that exposes Chrome browser control via the [Carrot Bridge](../server.py) server. Any MCP client (Claude Code, Cursor, etc.) can use it to navigate pages, click elements, fill forms, manage tabs, take screenshots, and more.
+This folder contains an optional standalone MCP adapter for the
+[Carrot Bridge](../server.py) server. It is useful for MCP clients that need a
+local stdio/SSE process. It does not replace the bridge server; it wraps any
+running bridge instance through `CARROT_BRIDGE_URL`.
+
+If your MCP client supports remote Streamable HTTP MCP, you can connect
+directly to any bridge instance's `/mcp` endpoint instead of running this
+adapter.
 
 ## Prerequisites
 
-1. **Carrot Bridge Server** running (local or cloud)
+1. **Carrot Bridge Server** running anywhere
 2. **Carrot Chrome Extension** installed and connected to the bridge
 
 ## Setup
@@ -13,12 +20,13 @@ MCP server that exposes Chrome browser control via the [Carrot Bridge](../server
 
 | Variable | Default | Description |
 |---|---|---|
-| `CARROT_BRIDGE_URL` | `http://127.0.0.1:7777` | Bridge server URL. Use `https://browser.carrotlabs.ai` for the hosted Carrot bridge. |
+| `CARROT_BRIDGE_URL` | `http://127.0.0.1:7777` | Bridge server URL. Use `https://browser.carrotlabs.ai` for the community-hosted instance. |
 | `CARROT_SESSION_TOKEN` | _(empty)_ | Session token for authenticated access |
 
 For **local development** (no auth), the defaults work out of the box.
 
-For **cloud servers**, set the URL and either provide a token or use the `claim_session` tool at runtime.
+For authenticated bridge instances, set the URL and either provide a token or
+use the `claim_session` tool at runtime.
 
 ### Cursor
 
@@ -45,7 +53,7 @@ Add to your Cursor MCP settings (`.cursor/mcp.json` or global settings):
 # Local (no auth)
 claude mcp add carrot -- uv --directory /ABSOLUTE/PATH/TO/carrot-extension/mcp-server run python server.py
 
-# Cloud (set env vars before running)
+# Community-hosted bridge instance
 CARROT_BRIDGE_URL=https://browser.carrotlabs.ai claude mcp add carrot -- uv --directory /ABSOLUTE/PATH/TO/carrot-extension/mcp-server run python server.py
 ```
 
@@ -69,7 +77,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ## Authentication Flow
 
-When connecting to a cloud bridge server (auth required):
+When connecting to an authenticated bridge instance:
 
 1. The user generates a **pairing code** in the Carrot side panel
 2. The agent calls the `claim_session` MCP tool with that code

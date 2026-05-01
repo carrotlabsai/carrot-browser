@@ -15,8 +15,10 @@ You can control the user's Chrome browser through the Carrot Bridge Server. The 
 ### Local (no auth)
 Bridge at `http://127.0.0.1:7777`. Server must be running (`python server.py --no-auth --port 7777`) and extension installed.
 
-### Cloud (authenticated)
-Bridge at `https://browser.carrotlabs.ai` (or another hosted instance). Requires a session token.
+### Authenticated Bridge Instance
+Bridge at `https://browser.carrotlabs.ai` (the community-hosted instance) or
+another bridge URL. Requires a session token when `/status` reports
+`auth_required: true`.
 
 Set environment variables:
 - `CARROT_BRIDGE_URL` — bridge server URL
@@ -48,6 +50,11 @@ Authorization: Bearer <session_token>
 ```
 
 The server queues the command, the extension picks it up, executes it, and returns the result. Default timeout is 30s. Override with `"_timeout": 60`.
+
+For the complete current HTTP route and command reference, read
+`<bridge_url>/api.md` (for the community-hosted instance:
+`https://browser.carrotlabs.ai/api.md`). The command list below covers the
+common workflow and is not the exhaustive browser capability surface.
 
 ## Core Workflow
 
@@ -223,7 +230,7 @@ May fail on Trusted Types sites (YouTube, etc.). Prefer readPage + click/type fo
 # Check server (local, no auth)
 curl -s http://127.0.0.1:7777/status | python3 -m json.tool
 
-# Read the current page (cloud, with auth)
+# Read the current page (authenticated bridge)
 curl -s -X POST https://browser.carrotlabs.ai/cmd \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer <token>' \

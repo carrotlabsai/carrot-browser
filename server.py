@@ -9,7 +9,7 @@ scoped sessions (tab, window, or full browser access).
 Local mode (--no-auth):
     python server.py --no-auth          # like the old localhost-only server
 
-Cloud mode (default):
+Authenticated/network mode (default):
     uvicorn server:app --host 0.0.0.0 --port 8080
 
 Env vars:
@@ -707,14 +707,21 @@ async def bookmark_tree(
 
 LLMS_TXT = """# Carrot Browser Bridge
 
-Carrot is a hosted bridge between AI agents and a user's Chrome browser.
-The hosted service is available at https://browser.carrotlabs.ai.
+Carrot Browser Bridge is an open-source bridge between AI agents and a user's
+Chrome browser. You can run your own bridge server, or use the community-hosted
+instance at https://browser.carrotlabs.ai.
 
 What it does:
 - Browser extensions connect to /ws over WebSocket.
 - Agents call HTTP endpoints or the MCP endpoint at /mcp.
 - Users authorize agents with short-lived pairing codes from the Carrot side panel.
 - Sessions can be scoped to one tab, one window, or the whole browser.
+
+Agent docs:
+- Quick start: https://browser.carrotlabs.ai/llms.txt
+- Full HTTP API and command reference: https://browser.carrotlabs.ai/api.md
+- OpenAPI schema for top-level HTTP routes: https://browser.carrotlabs.ai/openapi.json
+- MCP endpoint: https://browser.carrotlabs.ai/mcp
 
 How an agent should use it:
 1. Ask the user to install/open the Carrot Chrome extension and generate a pairing code.
@@ -724,39 +731,382 @@ How an agent should use it:
 4. Prefer POST /cmd for browser actions. Example:
    {"type":"readPage"}
 5. For page interactions, call readPage or find first and use returned ref IDs.
-6. MCP clients can connect directly to https://browser.carrotlabs.ai/mcp and use claim_session.
+6. MCP clients can connect directly to any bridge instance's /mcp endpoint and use claim_session.
 
 Useful endpoints:
 - GET /status
+- GET /api.md
 - POST /sessions/claim
 - GET /sessions
 - POST /cmd
 - GET /focused
 - GET /tabs
 - GET /windows
+- GET /groups
+- GET /bookmark_tree
 - GET /screenshot?tabId=123
 - POST /navigate
 - POST /execute
 - /mcp (MCP endpoint)
 
 Common commands via POST /cmd:
-- readPage, find, getPageText, query
+- readPage, find, getPageText, dom, query
 - click, hover, type, formInput, scroll, press
-- navigate, goBack, goForward
-- tabs, focused, getWindows
+- navigate, goBack, goForward, execute
+- tabs, focused, activateTab, createTab, closeTab, reloadTab
+- duplicateTab, pinTab, muteTab, moveTab, discardTab
+- getWindows, createWindow, updateWindow, closeWindow, resizeWindow
+- groupTabs, ungroupTabs, updateGroup, queryGroups
 - screenshot
 - readConsole, readNetwork
+- searchHistory, deleteHistory
+- searchBookmarks, createBookmark, getBookmarkTree
+- download, getDownloads, notify
 
-Self-hosting:
-The bridge server is open source in this repository. Users can run their own
-server.py locally or run it elsewhere, then set the extension Server URL to
-their server instead of https://browser.carrotlabs.ai.
+For all command parameters and examples, read /api.md.
+
+Running your own bridge:
+This server is open source in this repository. Users can run server.py locally
+or elsewhere, then set the extension Server URL to that bridge instance.
 """
 
 
 @app.get("/llms.txt", response_class=PlainTextResponse)
 async def llms_txt():
     return LLMS_TXT
+
+
+API_MD = """# Carrot Browser Bridge API
+
+Base URL: use your bridge URL. Community-hosted instance: https://browser.carrotlabs.ai
+
+Carrot Browser Bridge lets an authorized AI agent control the user's Chrome
+browser through either direct HTTP calls or MCP tools. The complete browser
+command surface is available through `POST /cmd`; convenience HTTP routes and
+MCP tools cover common operations.
+
+## Agent Workflow
+
+1. Ask the user to install/open the Carrot Chrome extension.
+2. Ask the user to generate a pairing code from the Carrot side panel.
+3. Claim the pairing code:
+
+```http
+POST /sessions/claim
+Content-Type: application/json
+
+{"code":"ABC123","agent_name":"your-agent-name"}
+```
+
+4. Use the returned `session_token` on authenticated requests:
+
+```http
+Authorization: Bearer SESSION_TOKEN
+```
+
+5. Start page work by calling `readPage` or `find`, then use returned `ref`
+   IDs for interactions.
+
+Local `--no-auth` servers do not require pairing or bearer tokens. Public or
+network-accessible bridge instances should normally require auth.
+
+## Sessions and Scope
+
+Pairing codes are single-use and expire quickly. Sessions default to 8 hours.
+The user chooses one of these scopes:
+
+| Scope | Meaning |
+|---|---|
+| `tab:TAB_ID` | Commands are constrained to a single tab. |
+| `window:WINDOW_ID` | Commands are constrained to one Chrome window. |
+| `browser` | Commands can act across the browser. |
+
+Tab-scoped sessions can use page reading, page interaction, navigation, debug,
+screenshots, and tab-local operations. Window-scoped sessions add window-local
+tab/window/group operations. Browser-scoped sessions can use all commands.
+
+## Top-Level HTTP Routes
+
+All agent-facing routes require `Authorization: Bearer SESSION_TOKEN` when
+auth is enabled, except public information routes.
+
+### Public Information
+
+| Route | Description |
+|---|---|
+| `GET /` | Human-readable bridge status page. |
+| `GET /status` | JSON service status, auth mode, live counts, and doc links. |
+| `GET /llms.txt` | Compact agent quick-start and discovery file. |
+| `GET /api.md` | This full HTTP API and command reference. |
+| `GET /openapi.json` | FastAPI OpenAPI schema for top-level HTTP routes. |
+| `GET /privacy` | Privacy policy HTML for the community-hosted instance. |
+| `GET /privacy.md` | Privacy policy Markdown for the community-hosted instance. |
+| `/mcp` | Streamable HTTP MCP endpoint for MCP clients. |
+
+### Session Routes
+
+| Route | Body / Params | Description |
+|---|---|---|
+| `POST /sessions/claim` | `{"code":"ABC123","agent_name":"name"}` | Claim a user-generated pairing code. Returns `session_token`, `scope`, `browser_id`, and `expires_in`. |
+| `GET /sessions` | none | List sessions visible to the current session. |
+
+### Generic Browser Command
+
+`POST /cmd` is the preferred HTTP interface for browser actions.
+
+```http
+POST /cmd
+Content-Type: application/json
+Authorization: Bearer SESSION_TOKEN
+
+{"type":"readPage"}
+```
+
+The request body must include `type`; all other fields are passed as command
+parameters. The default command timeout is 30 seconds. Override it with
+`"_timeout": 60`.
+
+Typical response shape:
+
+```json
+{"result": "...command-specific result..."}
+```
+
+Errors return JSON with an `error` field and a non-2xx status when the bridge
+or extension rejects the command.
+
+### Convenience Routes
+
+These routes wrap common `/cmd` command types. They are kept for simple clients;
+agents should prefer `POST /cmd` for the complete command surface.
+
+| Route | Equivalent command | Notes |
+|---|---|---|
+| `POST /navigate` | `navigate` | Body: `url`, optional `tabId`. |
+| `POST /execute` | `execute` | Body: `script`, optional `tabId`, `world`. |
+| `POST /click` | `click` | Body: `selector`, optional `index`, `tabId`. |
+| `POST /query` | `query` | Body: `selector`, optional `limit`, `tabId`. |
+| `POST /scroll` | `scroll` | Body: optional `selector`, `direction`, `tabId`. |
+| `POST /press` | `press` | Body: `key`, optional `tabId`. |
+| `POST /close` | `closeTab` | Body: `tabId`. |
+| `GET /tabs` | `tabs` | Lists tabs, constrained by session scope. |
+| `GET /focused` | `focused` | Active tab in the last-focused window/scope. |
+| `GET /screenshot` | `screenshot` | Query: optional `windowId`, `tabId`, `format`. |
+| `GET /windows` | `getWindows` | Lists browser windows and their tabs. |
+| `GET /groups` | `queryGroups` | Query: optional `windowId`. |
+| `GET /history` | `searchHistory` | Query: `q`, `maxResults`, optional `startTime`. |
+| `GET /bookmarks` | `searchBookmarks` | Query: `q`. |
+| `GET /bookmark_tree` | `getBookmarkTree` | Full bookmark tree. |
+
+## Command Reference
+
+All commands below are sent as JSON to `POST /cmd`.
+
+### Page Reading and Element Discovery
+
+Always call `readPage` or `find` before interacting with elements. Prefer `ref`
+IDs over CSS selectors for actions because refs target the page snapshot the
+extension just observed.
+
+| Command | Parameters | Description |
+|---|---|---|
+| `readPage` | optional `selector`, `maxElements`, `tabId` | Accessibility-style tree with visible text and interactive elements. Returns `ref` IDs. |
+| `find` | `query`; optional `role`, `limit`, `tabId` | Search visible elements by text, aria-label, placeholder, and role. Returns `ref` IDs. |
+| `getPageText` | optional `selector`, `maxLength`, `tabId` | Extract page text, up to 500k chars by default. |
+| `dom` | optional `selector`, `tabId` | Alias-like text/DOM extraction path used by older clients. |
+| `query` | `selector`; optional `limit`, `tabId` | CSS selector query returning refs and text. |
+
+Examples:
+
+```json
+{"type":"readPage","selector":"body","maxElements":500}
+{"type":"find","query":"Submit","role":"button","limit":5}
+{"type":"query","selector":"button.primary","limit":10}
+```
+
+### Page Interaction
+
+Most interaction commands accept either `ref` or `selector`; use `ref` when
+available. Many also accept `tabId`.
+
+| Command | Parameters | Description |
+|---|---|---|
+| `click` | `ref` or `selector`; optional `index`, `tabId` | Click an element. |
+| `hover` | `ref` or `selector`; optional `index`, `tabId` | Hover an element. |
+| `type` | `text`; optional `ref`, `selector`, `tabId` | Type with simulated keyboard input. |
+| `formInput` | `value`; optional `ref`, `selector`, `tabId` | Set input/select/checkbox/radio/textarea values directly. |
+| `fillContentEditable` | `text`; optional `ref`, `selector`, `maxScrolls`, `tabId` | Fill rich text/contenteditable editors. |
+| `scroll` | optional `direction`, `amount`, `ref`, `selector`, `tabId` | Scroll page or element. Directions: `up`, `down`, `left`, `right`. |
+| `press` | `key`; optional `ref`, `selector`, `tabId` | Send a key press such as `Enter`, `Tab`, `Escape`, or `ArrowDown`. |
+
+Examples:
+
+```json
+{"type":"click","ref":"ref_42"}
+{"type":"formInput","ref":"ref_7","value":"hello@example.com"}
+{"type":"press","key":"Enter"}
+```
+
+### Navigation and JavaScript
+
+| Command | Parameters | Description |
+|---|---|---|
+| `navigate` | `url`; optional `tabId` | Navigate a tab. |
+| `goBack` | optional `tabId` | Navigate back. |
+| `goForward` | optional `tabId` | Navigate forward. |
+| `execute` | `script`; optional `tabId`, `world` | Execute JavaScript in the page. Prefer page actions for normal interaction. |
+
+Examples:
+
+```json
+{"type":"navigate","url":"https://example.com"}
+{"type":"execute","script":"document.title","world":"MAIN"}
+```
+
+### Tabs
+
+| Command | Parameters | Description |
+|---|---|---|
+| `focused` | optional `tabId`, `windowId` | Return focused tab context. |
+| `tabs` | optional `tabId`, `windowId` | List tabs or return one tab. |
+| `activateTab` | `tabId` | Focus Chrome and activate a tab. |
+| `createTab` | optional `url`, `active`, `pinned`, `index`, `windowId` | Create a tab. |
+| `closeTab` | optional `tabId` | Close a tab; defaults to active scoped tab where allowed. |
+| `reloadTab` | optional `tabId`, `bypassCache` | Reload a tab. |
+| `duplicateTab` | optional `tabId` | Duplicate a tab. |
+| `pinTab` | optional `tabId`, `pinned` | Pin or unpin a tab. |
+| `muteTab` | optional `tabId`, `muted` | Mute or unmute a tab. |
+| `moveTab` | optional `tabId`, `index`, `windowId` | Move a tab. |
+| `discardTab` | optional `tabId` | Discard a tab to free memory. |
+
+Examples:
+
+```json
+{"type":"createTab","url":"https://example.com","active":true}
+{"type":"activateTab","tabId":123}
+{"type":"moveTab","tabId":123,"index":0}
+```
+
+### Tab Groups
+
+| Command | Parameters | Description |
+|---|---|---|
+| `groupTabs` | `tabIds`; optional `groupId`, `title`, `color`, `collapsed` | Group tabs and optionally update group metadata. |
+| `ungroupTabs` | `tabIds` | Remove tabs from groups. |
+| `updateGroup` | `groupId`; optional `title`, `color`, `collapsed` | Update group metadata. |
+| `queryGroups` | optional `queryInfo` | Query tab groups. Window scope injects its `windowId`. |
+
+Example:
+
+```json
+{"type":"groupTabs","tabIds":[1,2],"title":"Research","color":"blue"}
+```
+
+### Windows
+
+| Command | Parameters | Description |
+|---|---|---|
+| `getWindows` | optional `windowId` | List windows with tabs. |
+| `createWindow` | optional `url`, `windowType`, `state`, `incognito`, `focused`, `left`, `top`, `width`, `height` | Create a Chrome window. |
+| `updateWindow` | `windowId`; optional `state`, `focused`, `drawAttention`, `left`, `top`, `width`, `height` | Update a window. |
+| `closeWindow` | `windowId` | Close a window. |
+| `resizeWindow` | optional `windowId`, `width`, `height`, `left`, `top` | Resize/reposition a window; defaults to last-focused window. |
+
+Example:
+
+```json
+{"type":"createWindow","url":"https://example.com","state":"maximized"}
+```
+
+### Screenshots
+
+| Command | Parameters | Description |
+|---|---|---|
+| `screenshot` | optional `windowId`, `tabId`, `format`, `quality` | Capture visible tab or a specific tab. `format` defaults to `png`; `quality` defaults to 90. |
+
+Example:
+
+```json
+{"type":"screenshot","tabId":123,"format":"png"}
+```
+
+### Debugging
+
+Console and network commands install page interceptors. Call with
+`"install": true` once per page load, then call again to read buffered events.
+
+| Command | Parameters | Description |
+|---|---|---|
+| `readConsole` | optional `install`, `tabId` | Read console log/warn/error messages. |
+| `readNetwork` | optional `install`, `tabId` | Read fetch/XHR network activity. |
+
+Examples:
+
+```json
+{"type":"readConsole","install":true}
+{"type":"readNetwork","install":true}
+```
+
+### History, Bookmarks, Downloads, Notifications
+
+Some browser-wide commands require browser scope. Window/tab scopes may reject
+commands that expose browser-wide data or act outside the granted scope.
+
+| Command | Parameters | Description |
+|---|---|---|
+| `searchHistory` | optional `query`, `startTime`, `endTime`, `maxResults` | Search Chrome history. |
+| `deleteHistory` | `url` | Delete a URL from history. |
+| `searchBookmarks` | optional `query` | Search bookmarks. |
+| `createBookmark` | optional `title`, `url`, `parentId` | Create a bookmark or folder. |
+| `getBookmarkTree` | none | Return the full bookmark tree. |
+| `download` | `url`; optional `filename`, `saveAs` | Start a browser download. |
+| `getDownloads` | optional `queryInfo` | Search downloads. |
+| `notify` | optional `title`, `message`, `iconUrl` | Create a Chrome notification. |
+
+Examples:
+
+```json
+{"type":"searchHistory","query":"docs","maxResults":25}
+{"type":"createBookmark","title":"Carrot","url":"https://carrotlabs.ai"}
+{"type":"download","url":"https://example.com/file.pdf","filename":"file.pdf"}
+```
+
+## MCP
+
+MCP clients can connect to any bridge instance's `/mcp` endpoint. For the
+community-hosted instance:
+
+```text
+https://browser.carrotlabs.ai/mcp
+```
+
+Use the `claim_session` MCP tool with a user-generated pairing code, then call
+the available MCP tools. MCP is a convenience interface for common commands;
+the direct HTTP `/cmd` endpoint remains the canonical complete command surface.
+
+## Extension and Legacy Routes
+
+The Chrome extension connects to `GET /ws` by WebSocket. Older no-auth local
+setups may use `GET /poll` and `POST /complete`; those legacy routes are not
+available when auth is enabled. The extension also uses `POST /ping` for browser
+registration/keepalive.
+
+## Best Practices for Agents
+
+- Read `/llms.txt` first for the compact flow, then `/api.md` for details.
+- Always call `readPage` or `find` before interacting with page elements.
+- Prefer `ref` IDs over selectors.
+- Use `formInput` for form values; use `type` when simulated keystrokes matter.
+- Use `fillContentEditable` for rich text editors.
+- Respect the scope the user granted. Do not ask for broader scope unless the
+  task truly needs it.
+- Verify important actions by reading the page again.
+"""
+
+
+@app.get("/api.md", response_class=PlainTextResponse)
+async def api_markdown():
+    return API_MD
 
 
 def _privacy_markdown() -> str:
@@ -875,6 +1225,7 @@ async def _public_stats() -> dict[str, Any]:
         "auth_required": not NO_AUTH,
         "mcp_endpoint": "/mcp",
         "llms_txt": "/llms.txt",
+        "api_reference": "/api.md",
         "privacy_policy": "/privacy",
     }
 
@@ -987,6 +1338,7 @@ async def root():
     </p>
     <nav class="links" aria-label="Service links">
       <a href="/llms.txt">llms.txt</a>
+      <a href="/api.md">API reference</a>
       <a href="/status">status JSON</a>
       <a href="/privacy">privacy policy</a>
       <a href="/mcp">MCP endpoint</a>

@@ -20,7 +20,7 @@
 
 Carrot is a Chrome extension plus a small bridge server that lets AI agents safely act in your browser through a simple HTTP and MCP API.
 
-**Hosted bridge:** `https://browser.carrotlabs.ai`
+**Community-hosted bridge instance:** `https://browser.carrotlabs.ai`
 
 ## What It Does
 
@@ -35,7 +35,7 @@ Carrot is a Chrome extension plus a small bridge server that lets AI agents safe
 ┌─────────────┐         ┌──────────────────┐         ┌──────────────────┐
 │  AI Agent    │  HTTP   │  Carrot Bridge   │   WS    │  Chrome Extension│
 │  (Cursor,    │────────▶│  Server          │◀────────│  (your browser)  │
-│   Claude,    │  /cmd   │  (cloud or local)│  cmds   │                  │
+│   Claude,    │  /cmd   │  any instance    │  cmds   │                  │
 │   scripts)   │◀────────│                  │────────▶│  executes via    │
 │              │ results │                  │ results │  chrome.* APIs   │
 └─────────────┘         └──────────────────┘         └──────────────────┘
@@ -56,17 +56,17 @@ Carrot is a Chrome extension plus a small bridge server that lets AI agents safe
 4. Click "Load unpacked" and select this folder
 5. Click the Carrot icon in your toolbar — the side panel will slide in
 
-### 2a. Hosted Bridge (default)
+### 2a. Use the Community-Hosted Bridge
 
-The extension ships pointing at the hosted bridge at
-`https://browser.carrotlabs.ai`. No server setup is required: install the
-extension, open the side panel, generate a pairing code, and give that code to
-your agent.
+The extension ships pointing at `https://browser.carrotlabs.ai`, a
+community-hosted instance of the same open-source bridge server in this repo.
+No server setup is required: install the extension, open the side panel,
+generate a pairing code, and give that code to your agent.
 
-The hosted bridge is optional. The server code in this repo is fully
-self-hostable if you prefer to run your own bridge or keep traffic on localhost.
+This hosted instance is optional. You can run the same `server.py` yourself if
+you prefer to operate your own bridge or keep traffic on localhost.
 
-### 2b. Local Mode (self-hosted, no auth)
+### 2b. Run Your Own Local Bridge
 
 ```bash
 pip install fastapi uvicorn[standard]
@@ -144,15 +144,20 @@ Carrot uses a **pairing-code authentication** model inspired by [OAuth 2.0 Devic
 - Users can view and revoke active sessions from the side panel
 - Each session is tied to one browser
 
-## MCP Server
+## MCP Access
 
-The MCP server wraps the bridge API so any MCP client (Cursor, Claude Code, Claude Desktop) can control Chrome via standard tool calls.
+The bridge server exposes MCP directly at `/mcp`. This is part of `server.py`,
+so every bridge instance has the same HTTP, WebSocket, and MCP surfaces when it
+runs the current code.
 
-See [mcp-server/README.md](mcp-server/README.md) for setup instructions.
+The `mcp-server/` folder is different: it is an optional standalone MCP adapter
+for clients that want to run a local stdio/SSE MCP process. It does not replace
+the bridge server; it wraps any running bridge via `CARROT_BRIDGE_URL`.
 
 ### Quick MCP Setup (Cursor)
 
-The cloud server exposes MCP directly — no local process needed. Add to `.cursor/mcp.json`:
+If your MCP client supports remote Streamable HTTP MCP, point it directly at
+your bridge instance. For the community-hosted instance:
 
 ```json
 {
@@ -166,9 +171,10 @@ The cloud server exposes MCP directly — no local process needed. Add to `.curs
 
 The agent can then use the `claim_session` tool to pair with your browser at runtime.
 
-#### Self-hosted MCP (alternative)
+#### Optional Local MCP Adapter
 
-If you're running the server locally, you can use the standalone MCP adapter instead:
+If your MCP client needs a local process, run the optional adapter and point it
+at any bridge URL:
 
 ```json
 {
@@ -185,6 +191,12 @@ If you're running the server locally, you can use the standalone MCP adapter ins
 ```
 
 ## API Reference
+
+Every bridge instance serves the complete agent-facing HTTP reference at
+`/api.md`. The community-hosted copy is available at
+[`https://browser.carrotlabs.ai/api.md`](https://browser.carrotlabs.ai/api.md).
+The notes below cover the common flow; `POST /cmd` is the canonical interface
+for the full command surface.
 
 All agent-facing endpoints require `Authorization: Bearer <token>` when auth is enabled.
 
@@ -281,8 +293,8 @@ Other approaches considered:
 
 ## Self-Hosting
 
-You can use the hosted bridge at `https://browser.carrotlabs.ai` if you do not
-want to run infrastructure. To run your own bridge instead, run the included
+You can use the community-hosted bridge at `https://browser.carrotlabs.ai` if
+you do not want to run infrastructure. To run your own bridge, use the same
 `server.py` app locally or on infrastructure you control.
 
 ### Docker
@@ -295,7 +307,7 @@ docker run --rm -p 8080:8080 carrot-browser-bridge
 Then open the extension options and set the Server URL to
 `http://127.0.0.1:8080`.
 
-See [DEPLOY.md](DEPLOY.md) for Fly.io and production deployment notes.
+See [DEPLOY.md](DEPLOY.md) for Fly.io and deployment notes.
 
 ### Environment Variables
 
@@ -327,7 +339,7 @@ carrot-extension/
   DEPLOY.md               Self-hosting and deployment notes
   requirements.txt        Python dependencies
   deploy/                 Example deployment configs
-  mcp-server/             FastMCP wrapper for MCP clients
+  mcp-server/             Optional local MCP adapter for MCP clients
 ```
 
 ## Contributing
