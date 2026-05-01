@@ -141,7 +141,7 @@ def _check_scope(session_scope: str, cmd: dict) -> bool:
 
 TAB_SCOPE_COMMANDS = {
     "focused", "tabs",
-    "navigate", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
+    "navigate", "activateTab", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
     "screenshot",
     "readPage", "find", "getPageText", "dom", "query",
     "click", "hover", "type", "formInput", "scroll", "press",
@@ -154,10 +154,11 @@ WINDOW_SCOPE_COMMANDS = TAB_SCOPE_COMMANDS | {
     "getWindows", "createTab", "duplicateTab", "moveTab",
     "groupTabs", "ungroupTabs", "updateGroup", "queryGroups",
     "updateWindow", "closeWindow", "resizeWindow",
+    "activateTab",
 }
 
 TAB_TARGETED_COMMANDS = {
-    "navigate", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
+    "navigate", "activateTab", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
     "screenshot",
     "readPage", "find", "getPageText", "dom", "query",
     "click", "hover", "type", "formInput", "scroll", "press",
@@ -1078,7 +1079,8 @@ mcp_server = FastMCP(
         "Carrot controls the user's Chrome browser. "
         "Always call read_page before interacting with elements — you need ref IDs. "
         "Use ref IDs (e.g. ref_42) from read_page/find results for click, type, form_input, etc. "
-        "Most commands target the active tab by default; pass tab_id to target a specific tab. "
+        "Most commands target the active tab by default; pass tab_id to target a specific tab for automation. "
+        "Use activate_tab with an id from list_tabs to focus Chrome and switch the visible tab strip. "
         "If the server requires authentication, use claim_session with a pairing code first."
     ),
 )
@@ -1354,6 +1356,12 @@ async def list_tabs() -> str:
 async def focused_tab() -> str:
     """Get the active tab in the last-focused window."""
     return str(await _mcp_cmd("focused"))
+
+
+@mcp_server.tool()
+async def activate_tab(tab_id: int) -> str:
+    """Focus the Chrome window and make this tab the active one (matches user clicking the tab)."""
+    return str(await _mcp_cmd("activateTab", tabId=tab_id))
 
 
 @mcp_server.tool()

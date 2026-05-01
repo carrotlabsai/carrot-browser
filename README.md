@@ -18,19 +18,16 @@
 
 ---
 
-Carrot is a Chrome extension plus a tiny bridge server that lets AI agents safely drive your browser: read accessibility trees, click and type, fill forms, manage tabs, take screenshots, and inspect console and network traffic — all through a simple HTTP and MCP API.
-
-Every agent action streams live into a **side panel** in your browser, and a subtle gold overlay appears on any page being controlled so you always know when an agent is at the wheel.
+Carrot is a Chrome extension plus a small bridge server that lets AI agents safely act in your browser through a simple HTTP and MCP API.
 
 **Hosted bridge:** `https://browser.carrotlabs.ai`
 
-## Highlights
+## What It Does
 
-- **Live side panel** — sleek black/gold UI streaming every agent action in real time
-- **On-page indicator** — an animated pill surfaces on any tab an agent is controlling, even in the background
-- **Pairing codes** — 6-character codes grant scoped, time-limited access (tab / window / browser)
-- **MCP native** — plug directly into Cursor, Claude Desktop, or any MCP client
-- **Zero-config local mode** — `python server.py --no-auth` and you're running
+- **Browser actions** — read pages, click, type, fill forms, manage tabs, take screenshots, and inspect console/network data.
+- **Scope-based pairing** — 6-character codes grant time-limited access to a tab, window, or browser.
+- **Activity monitoring** — the side panel shows active sessions and streams agent actions in real time.
+- **MCP and HTTP APIs** — use Carrot from Cursor, Claude Desktop, scripts, or any MCP client.
 
 ## How It Works
 
@@ -316,7 +313,7 @@ carrot-extension/
   manifest.json           Chrome MV3 manifest
   background.js           Service worker: WebSocket, command dispatch,
                           activity broadcasting, tab-control tracking
-  content.js              Keepalive + animated on-page overlay
+  content.js              Keepalive + on-page activity indicator
   sidepanel/              Live side-panel UI (HTML / CSS / JS)
   options.html, options.js
                           Server URL & identity configuration

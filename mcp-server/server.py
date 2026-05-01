@@ -31,7 +31,8 @@ mcp = FastMCP(
         "Carrot controls the user's Chrome browser via a bridge server. "
         "Always call read_page before interacting with elements — you need ref IDs. "
         "Use ref IDs (e.g. ref_42) from read_page/find results for click, type, form_input, etc. "
-        "Most commands target the active tab by default; pass tabId to target a specific tab. "
+        "Most commands target the active tab by default; pass tabId for automation on another tab without switching it. "
+        "Use activate_tab with an id from list_tabs to focus Chrome and switch the tab the user sees. "
         "If the server requires authentication, use claim_session with a pairing code first."
     ),
 )
@@ -387,6 +388,13 @@ async def list_tabs() -> str:
 async def focused_tab() -> str:
     """Get the active tab in the last-focused window."""
     result = await _bridge_get("/focused")
+    return str(result)
+
+
+@mcp.tool()
+async def activate_tab(tab_id: int) -> str:
+    """Focus Chrome and activate this tab in the strip (matches the user clicking the tab)."""
+    result = await _bridge_cmd("activateTab", tabId=tab_id)
     return str(result)
 
 

@@ -475,7 +475,7 @@ chrome.tabs.onRemoved.addListener((tabId) => controlledTabs.delete(tabId));
 
 const TAB_SCOPE_COMMANDS = new Set([
   "focused", "tabs",
-  "navigate", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
+  "navigate", "activateTab", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
   "screenshot",
   "readPage", "find", "getPageText", "dom", "query",
   "click", "hover", "type", "formInput", "scroll", "press",
@@ -489,10 +489,11 @@ const WINDOW_SCOPE_COMMANDS = new Set([
   "getWindows", "createTab", "duplicateTab", "moveTab",
   "groupTabs", "ungroupTabs", "updateGroup", "queryGroups",
   "updateWindow", "closeWindow", "resizeWindow",
+  "activateTab",
 ]);
 
 const TAB_TARGETED_COMMANDS = new Set([
-  "navigate", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
+  "navigate", "activateTab", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
   "screenshot",
   "readPage", "find", "getPageText", "dom", "query",
   "click", "hover", "type", "formInput", "scroll", "press",
@@ -594,6 +595,21 @@ async function handleCommand(cmd) {
         const tabId = await getTab();
         await chrome.tabs.update(tabId, { url: cmd.url });
         result = { tabId, url: cmd.url };
+        break;
+      }
+
+      case "activateTab": {
+        if (!cmd.tabId) throw new Error("activateTab requires tabId");
+        const prev = await chrome.tabs.get(cmd.tabId);
+        await chrome.windows.update(prev.windowId, { focused: true });
+        const tab = await chrome.tabs.update(cmd.tabId, { active: true });
+        result = {
+          activated: true,
+          tabId: tab.id,
+          windowId: tab.windowId,
+          url: tab.url,
+          title: tab.title,
+        };
         break;
       }
 
@@ -1019,6 +1035,7 @@ function humanizeCmd(cmd) {
   if (cmd.type === "type") return `Type "${truncStr(cmd.text, 30)}"`;
   if (cmd.type === "formInput") return `Fill ${cmd.ref || cmd.selector || ""}`;
   if (cmd.type === "navigate") return `Navigate ${truncStr(cmd.url, 40)}`;
+  if (cmd.type === "activateTab") return `Activate tab ${cmd.tabId}`;
   if (cmd.type === "press") return `Press ${cmd.key}`;
   if (cmd.type === "scroll") return `Scroll ${cmd.direction || "down"}`;
   if (cmd.type === "screenshot") return "Taking screenshot";
@@ -1052,6 +1069,8 @@ function describeCommand(cmd, result, error) {
       return result?.format || "png";
     case "createTab":
       return truncStr(cmd.url, 60);
+    case "activateTab":
+      return `tabId=${cmd.tabId}`;
     case "execute":
       return truncStr((cmd.script || "").replace(/\s+/g, " "), 60);
     default:
