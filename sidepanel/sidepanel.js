@@ -384,7 +384,7 @@ function getCurrentPairingCode() {
 }
 
 function buildAgentPrompt(code) {
-  return `connect to my browser using the skill at ${SKILL_URL} . Code: ${code}.`;
+  return `connect to my browser using the skill at ${SKILL_URL} or MCP if installed. Code: ${code}.`;
 }
 
 function flashButtonLabel(button, label) {

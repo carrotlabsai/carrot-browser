@@ -1273,22 +1273,62 @@ async function resolveFrameId(tabId, iframeSelector, index = 0) {
   try {
     const frameElementMatches = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
-      func: (selector) => {
+      func: (selector, expected) => {
         if (window.top === window) return { matches: false };
         try {
           const el = window.frameElement;
+          if (!el?.matches?.(selector)) return { matches: false };
+          const attrSrc = el.getAttribute?.("src") || "";
+          const src = el.src || attrSrc || "";
+          const id = el.id || "";
+          const name = el.name || el.getAttribute?.("name") || "";
+          let indexAmong = -1;
+          try {
+            const root = el.ownerDocument || document;
+            indexAmong = Array.from(root.querySelectorAll(selector)).indexOf(el);
+          } catch {}
+          const identityMatch =
+            (expected.id && id === expected.id) ||
+            (expected.name && name === expected.name) ||
+            (expected.src && (src === expected.src || attrSrc === expected.attrSrc)) ||
+            (expected.attrSrc && attrSrc === expected.attrSrc) ||
+            indexAmong === expected.index;
           return {
-            matches: !!el?.matches?.(selector),
-            src: el?.src || el?.getAttribute?.("src") || "",
+            matches: true,
+            identityMatch: !!identityMatch,
+            indexAmong,
+            src,
+            attrSrc,
           };
         } catch (e) {
           return { matches: false, error: e.message };
         }
       },
-      args: [iframeSelector],
+      args: [iframeSelector, {
+        index: frameIndex,
+        src: iframe.src,
+        attrSrc: iframe.attrSrc,
+        id: iframe.id,
+        name: iframe.name,
+      }],
     });
-    const matched = frameElementMatches.find((entry) => entry.frameId !== 0 && entry.result?.matches);
-    if (matched) return { ...iframe, frameId: matched.frameId, frameUrl: matched.result?.src || "", matchedBy: "frameElement" };
+    const matchedFrames = frameElementMatches
+      .filter((entry) => entry.frameId !== 0 && entry.result?.matches)
+      .sort((a, b) => a.frameId - b.frameId);
+    if (matchedFrames.length) {
+      const byIdentity = matchedFrames.find((entry) => entry.result?.identityMatch);
+      const byIndex = matchedFrames.find((entry) => entry.result?.indexAmong === frameIndex)
+        || matchedFrames[frameIndex];
+      const matched = byIdentity || byIndex;
+      if (matched) {
+        return {
+          ...iframe,
+          frameId: matched.frameId,
+          frameUrl: matched.result?.src || "",
+          matchedBy: byIdentity ? "frameElement" : "frameElement-index",
+        };
+      }
+    }
   } catch {}
 
   const frames = await chrome.webNavigation.getAllFrames({ tabId });
@@ -1297,19 +1337,35 @@ async function resolveFrameId(tabId, iframeSelector, index = 0) {
   const normalizedSrc = normalizeUrlForFrameMatch(iframe.src || iframe.attrSrc);
   const normalizedAttrSrc = normalizeUrlForFrameMatch(iframe.attrSrc);
 
-  const exact = candidates.find((frame) => {
+  // DOM selection already pinned a specific iframe; a unique URL match is
+  // enough. If several frames share that URL, disambiguate with frameIndex.
+  const pickUrlMatch = (matches, matchedBy) => {
+    if (!matches.length) return null;
+    if (matches.length === 1) {
+      return { ...iframe, frameId: matches[0].frameId, frameUrl: matches[0].url, matchedBy };
+    }
+    if (frameIndex < 0 || frameIndex >= matches.length) return null;
+    const chosen = matches[frameIndex];
+    return { ...iframe, frameId: chosen.frameId, frameUrl: chosen.url, matchedBy: `${matchedBy}-index` };
+  };
+
+  const exactMatches = candidates.filter((frame) => {
     const frameUrl = normalizeUrlForFrameMatch(frame.url);
     return frameUrl && (frameUrl === normalizedSrc || frameUrl === normalizedAttrSrc);
   });
-  if (exact) return { ...iframe, frameId: exact.frameId, frameUrl: exact.url, matchedBy: "url" };
+  const exact = pickUrlMatch(exactMatches, "url");
+  if (exact) return exact;
 
-  const loose = candidates.find((frame) => {
+  const looseMatches = candidates.filter((frame) => {
     const frameUrl = normalizeUrlForFrameMatch(frame.url);
     return normalizedSrc && frameUrl && (frameUrl.startsWith(normalizedSrc) || normalizedSrc.startsWith(frameUrl));
   });
-  if (loose) return { ...iframe, frameId: loose.frameId, frameUrl: loose.url, matchedBy: "url-prefix" };
+  const loose = pickUrlMatch(looseMatches, "url-prefix");
+  if (loose) return loose;
 
-  if (candidates.length === 1) {
+  // Only safe when the caller asked for the first match and there is exactly
+  // one child frame in the tab — otherwise this can bind an unrelated frame.
+  if (frameIndex === 0 && candidates.length === 1) {
     const only = candidates[0];
     return { ...iframe, frameId: only.frameId, frameUrl: only.url, matchedBy: "single-child-frame" };
   }
