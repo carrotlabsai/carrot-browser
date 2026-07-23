@@ -394,6 +394,97 @@ async function captureTabScreenshotWithDebugger(tabId, opts = {}) {
   }
 }
 
+async function clickTabAt(tabId, x, y, opts = {}) {
+  const target = { tabId };
+  const button = opts.button || "left";
+  const coordinateSpace = opts.coordinateSpace || "page";
+  let point = { clientX: Number(x), clientY: Number(y), scrollX: 0, scrollY: 0 };
+  if (!Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) {
+    throw new Error("clickAt requires numeric x and y");
+  }
+
+  if (coordinateSpace !== "viewport") {
+    point = await resolvePagePointToViewport(tabId, point.clientX, point.clientY, opts.scrollIntoView !== false);
+  }
+
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: point.clientX,
+      y: point.clientY,
+      button: "none",
+    });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x: point.clientX,
+      y: point.clientY,
+      button,
+      buttons: button === "left" ? 1 : button === "right" ? 2 : 4,
+      clickCount: 1,
+    });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x: point.clientX,
+      y: point.clientY,
+      button,
+      buttons: 0,
+      clickCount: 1,
+    });
+    return {
+      clicked: true,
+      tabId,
+      x: Number(x),
+      y: Number(y),
+      clientX: point.clientX,
+      clientY: point.clientY,
+      coordinateSpace,
+      scrollX: point.scrollX,
+      scrollY: point.scrollY,
+    };
+  } finally {
+    if (attached) {
+      try {
+        await chrome.debugger.detach(target);
+      } catch {}
+    }
+  }
+}
+
+async function resolvePagePointToViewport(tabId, x, y, scrollIntoView) {
+  const [r] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (pageX, pageY, shouldScroll) => {
+      if (shouldScroll) {
+        const targetX = Math.max(0, pageX - Math.floor(window.innerWidth / 2));
+        const targetY = Math.max(0, pageY - Math.floor(window.innerHeight / 2));
+        if (
+          pageX < window.scrollX ||
+          pageX > window.scrollX + window.innerWidth ||
+          pageY < window.scrollY ||
+          pageY > window.scrollY + window.innerHeight
+        ) {
+          window.scrollTo(targetX, targetY);
+        }
+      }
+      return {
+        clientX: pageX - window.scrollX,
+        clientY: pageY - window.scrollY,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+      };
+    },
+    args: [x, y, scrollIntoView],
+  });
+  const point = r?.result;
+  if (!point) throw new Error("Unable to resolve clickAt page coordinates");
+  return point;
+}
+
 // ---------------------------------------------------------------------------
 // Activity / tab control broadcasting
 // ---------------------------------------------------------------------------
@@ -476,12 +567,12 @@ chrome.tabs.onRemoved.addListener((tabId) => controlledTabs.delete(tabId));
 const TAB_SCOPE_COMMANDS = new Set([
   "focused", "tabs",
   "navigate", "activateTab", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
-  "screenshot",
+  "screenshot", "resolveFrame", "clickAt",
   "readPage", "find", "getPageText", "dom", "query",
   "click", "hover", "type", "formInput", "scroll", "press",
   "fillContentEditable",
   "goBack", "goForward",
-  "readConsole", "readNetwork", "execute",
+  "readConsole", "readNetwork", "execute", "executeInFrame",
 ]);
 
 const WINDOW_SCOPE_COMMANDS = new Set([
@@ -494,12 +585,12 @@ const WINDOW_SCOPE_COMMANDS = new Set([
 
 const TAB_TARGETED_COMMANDS = new Set([
   "navigate", "activateTab", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
-  "screenshot",
+  "screenshot", "resolveFrame", "clickAt",
   "readPage", "find", "getPageText", "dom", "query",
   "click", "hover", "type", "formInput", "scroll", "press",
   "fillContentEditable",
   "goBack", "goForward",
-  "readConsole", "readNetwork", "execute",
+  "readConsole", "readNetwork", "execute", "executeInFrame",
 ]);
 
 async function enforceCommandScope(cmd) {
@@ -776,6 +867,23 @@ async function handleCommand(cmd) {
         break;
       }
 
+      case "resolveFrame": {
+        const tabId = await getTab();
+        const frame = await resolveFrameId(tabId, cmd.frameSelector || cmd.selector, cmd.frameIndex || cmd.index || 0);
+        result = { tabId, ...frame };
+        break;
+      }
+
+      case "clickAt": {
+        const tabId = await getTab();
+        result = await clickTabAt(tabId, cmd.x, cmd.y, {
+          button: cmd.button,
+          coordinateSpace: cmd.coordinateSpace,
+          scrollIntoView: cmd.scrollIntoView,
+        });
+        break;
+      }
+
       // ===================== History =====================
 
       case "searchHistory":
@@ -874,25 +982,25 @@ async function handleCommand(cmd) {
 
       case "click": {
         const tabId = await getTab();
-        result = await injectAction(tabId, "click", { ref: cmd.ref, selector: cmd.selector, index: cmd.index || 0 });
+        result = await injectAction(tabId, "click", actionInjectionOptions(cmd));
         break;
       }
 
       case "hover": {
         const tabId = await getTab();
-        result = await injectAction(tabId, "hover", { ref: cmd.ref, selector: cmd.selector, index: cmd.index || 0 });
+        result = await injectAction(tabId, "hover", actionInjectionOptions(cmd));
         break;
       }
 
       case "type": {
         const tabId = await getTab();
-        result = await injectAction(tabId, "type", { ref: cmd.ref, selector: cmd.selector, text: cmd.text });
+        result = await injectAction(tabId, "type", actionInjectionOptions(cmd, { text: cmd.text }));
         break;
       }
 
       case "formInput": {
         const tabId = await getTab();
-        result = await injectAction(tabId, "formInput", { ref: cmd.ref, selector: cmd.selector, value: cmd.value });
+        result = await injectAction(tabId, "formInput", actionInjectionOptions(cmd, { value: cmd.value }));
         break;
       }
 
@@ -910,10 +1018,10 @@ async function handleCommand(cmd) {
 
       case "fillContentEditable": {
         const tabId = await getTab();
-        result = await injectAction(tabId, "fillContentEditable", {
-          ref: cmd.ref, selector: cmd.selector || "#contenteditable-root",
+        result = await injectAction(tabId, "fillContentEditable", actionInjectionOptions(cmd, {
+          selector: cmd.selector || "#contenteditable-root",
           text: cmd.text || "", maxScrolls: cmd.maxScrolls ?? 24,
-        });
+        }));
         break;
       }
 
@@ -963,9 +1071,10 @@ async function handleCommand(cmd) {
 
       // ===================== JS execution =====================
 
-      case "execute": {
+      case "execute":
+      case "executeInFrame": {
         const tabId = await getTab();
-        result = await injectEval(tabId, cmd.script, cmd.world || "MAIN");
+        result = await injectEval(tabId, cmd.script, cmd.world || "MAIN", frameInjectionOptions(cmd));
         break;
       }
 
@@ -1014,7 +1123,7 @@ const TAB_INTERACTION_TYPES = new Set([
   "click", "hover", "type", "formInput", "scroll", "press",
   "fillContentEditable", "readPage", "find", "getPageText", "dom",
   "query", "navigate", "goBack", "goForward", "reloadTab",
-  "screenshot", "readConsole", "readNetwork", "execute",
+  "screenshot", "resolveFrame", "clickAt", "readConsole", "readNetwork", "execute", "executeInFrame",
 ]);
 
 async function resolveTabIdSafe(cmd) {
@@ -1039,6 +1148,8 @@ function humanizeCmd(cmd) {
   if (cmd.type === "press") return `Press ${cmd.key}`;
   if (cmd.type === "scroll") return `Scroll ${cmd.direction || "down"}`;
   if (cmd.type === "screenshot") return "Taking screenshot";
+  if (cmd.type === "resolveFrame") return `Resolve frame ${cmd.frameSelector || cmd.selector || ""}`;
+  if (cmd.type === "clickAt") return `Click at ${cmd.x},${cmd.y}`;
   if (cmd.type === "readPage") return "Reading page";
   if (cmd.type === "find") return `Find "${truncStr(cmd.query, 30)}"`;
   return cmd.type;
@@ -1067,11 +1178,16 @@ function describeCommand(cmd, result, error) {
       return result?.count != null ? `${result.count} elements` : "";
     case "screenshot":
       return result?.format || "png";
+    case "resolveFrame":
+      return result?.frameId != null ? `frameId=${result.frameId}` : "";
+    case "clickAt":
+      return `${cmd.x},${cmd.y}`;
     case "createTab":
       return truncStr(cmd.url, 60);
     case "activateTab":
       return `tabId=${cmd.tabId}`;
     case "execute":
+    case "executeInFrame":
       return truncStr((cmd.script || "").replace(/\s+/g, " "), 60);
     default:
       return "";
@@ -1082,6 +1198,134 @@ function truncStr(s, n) {
   if (!s) return "";
   const str = String(s);
   return str.length > n ? str.slice(0, n - 1) + "…" : str;
+}
+
+function actionInjectionOptions(cmd, extra = {}) {
+  return {
+    ref: cmd.ref,
+    selector: cmd.selector,
+    index: cmd.index || 0,
+    ...frameInjectionOptions(cmd),
+    ...extra,
+  };
+}
+
+function frameInjectionOptions(cmd) {
+  const opts = {};
+  if (cmd.frameId !== undefined && cmd.frameId !== null) opts.frameId = cmd.frameId;
+  if (cmd.frameSelector) opts.frameSelector = cmd.frameSelector;
+  if (cmd.frameIndex !== undefined && cmd.frameIndex !== null) opts.frameIndex = cmd.frameIndex;
+  if (cmd.allFrames) opts.allFrames = true;
+  return opts;
+}
+
+async function buildInjectionTarget(tabId, opts = {}) {
+  if (opts.frameSelector && opts.frameId === undefined) {
+    const frame = await resolveFrameId(tabId, opts.frameSelector, opts.frameIndex || 0);
+    return { tabId, frameIds: [frame.frameId] };
+  }
+  if (opts.frameId !== undefined && opts.frameId !== null) {
+    const frameId = Number(opts.frameId);
+    if (!Number.isInteger(frameId) || frameId < 0) throw new Error("frameId must be a non-negative integer");
+    return { tabId, frameIds: [frameId] };
+  }
+  if (opts.allFrames) return { tabId, allFrames: true };
+  return { tabId };
+}
+
+function unwrapInjectionResults(results, preferSuccess = () => false) {
+  if (!Array.isArray(results) || results.length === 0) return undefined;
+  if (results.length === 1) return results[0]?.result;
+
+  const mapped = results.map((entry) => ({
+    frameId: entry.frameId,
+    documentId: entry.documentId,
+    result: entry.result,
+  }));
+  const success = mapped.find((entry) => preferSuccess(entry.result));
+  return success?.result || mapped.find((entry) => !entry.result?.error)?.result || mapped[0]?.result;
+}
+
+async function resolveFrameId(tabId, iframeSelector, index = 0) {
+  if (!iframeSelector) throw new Error("resolveFrame requires frameSelector");
+  const frameIndex = Number(index) || 0;
+  const [iframeResult] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (selector, idx) => {
+      const iframe = Array.from(document.querySelectorAll(selector))[idx];
+      if (!iframe) return { found: false };
+      const attrSrc = iframe.getAttribute("src") || "";
+      return {
+        found: true,
+        selector,
+        index: idx,
+        src: iframe.src || attrSrc,
+        attrSrc,
+        id: iframe.id || "",
+        name: iframe.name || iframe.getAttribute("name") || "",
+      };
+    },
+    args: [iframeSelector, frameIndex],
+  });
+  const iframe = iframeResult?.result;
+  if (!iframe?.found) throw new Error(`iframe not found: ${iframeSelector}`);
+
+  try {
+    const frameElementMatches = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: (selector) => {
+        if (window.top === window) return { matches: false };
+        try {
+          const el = window.frameElement;
+          return {
+            matches: !!el?.matches?.(selector),
+            src: el?.src || el?.getAttribute?.("src") || "",
+          };
+        } catch (e) {
+          return { matches: false, error: e.message };
+        }
+      },
+      args: [iframeSelector],
+    });
+    const matched = frameElementMatches.find((entry) => entry.frameId !== 0 && entry.result?.matches);
+    if (matched) return { ...iframe, frameId: matched.frameId, frameUrl: matched.result?.src || "", matchedBy: "frameElement" };
+  } catch {}
+
+  const frames = await chrome.webNavigation.getAllFrames({ tabId });
+  if (!frames?.length) throw new Error("No frames found for tab");
+  const candidates = frames.filter((frame) => frame.frameId !== 0);
+  const normalizedSrc = normalizeUrlForFrameMatch(iframe.src || iframe.attrSrc);
+  const normalizedAttrSrc = normalizeUrlForFrameMatch(iframe.attrSrc);
+
+  const exact = candidates.find((frame) => {
+    const frameUrl = normalizeUrlForFrameMatch(frame.url);
+    return frameUrl && (frameUrl === normalizedSrc || frameUrl === normalizedAttrSrc);
+  });
+  if (exact) return { ...iframe, frameId: exact.frameId, frameUrl: exact.url, matchedBy: "url" };
+
+  const loose = candidates.find((frame) => {
+    const frameUrl = normalizeUrlForFrameMatch(frame.url);
+    return normalizedSrc && frameUrl && (frameUrl.startsWith(normalizedSrc) || normalizedSrc.startsWith(frameUrl));
+  });
+  if (loose) return { ...iframe, frameId: loose.frameId, frameUrl: loose.url, matchedBy: "url-prefix" };
+
+  if (candidates.length === 1) {
+    const only = candidates[0];
+    return { ...iframe, frameId: only.frameId, frameUrl: only.url, matchedBy: "single-child-frame" };
+  }
+
+  throw new Error(`Unable to match iframe selector to a frameId: ${iframeSelector}`);
+}
+
+function normalizeUrlForFrameMatch(url) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    return parsed.href;
+  } catch {
+    return String(url).split("#")[0];
+  }
 }
 
 // =============================================================================
@@ -1254,8 +1498,9 @@ async function injectGetPageText(tabId, selector, maxLength) {
 }
 
 async function injectAction(tabId, action, opts) {
-  const [r] = await chrome.scripting.executeScript({
-    target: { tabId },
+  const target = await buildInjectionTarget(tabId, opts);
+  const results = await chrome.scripting.executeScript({
+    target,
     func: (act, ref, selector, index, text, value, maxScrolls) => {
       function resolveEl(r, sel, idx) {
         if (r && window.__carrotRefs && window.__carrotRefs[r]) return window.__carrotRefs[r];
@@ -1350,7 +1595,9 @@ async function injectAction(tabId, action, opts) {
     },
     args: [action, opts.ref ?? "", opts.selector ?? "", opts.index || 0, opts.text || "", opts.value ?? "", opts.maxScrolls || 24],
   });
-  return r?.result;
+  return unwrapInjectionResults(results, (result) =>
+    !!(result?.clicked || result?.hovered || result?.typed || result?.set || result?.ok)
+  );
 }
 
 async function injectScroll(tabId, ref, selector, direction, amount) {
@@ -1525,9 +1772,10 @@ async function injectReadNetwork(tabId, install) {
   return r?.result;
 }
 
-async function injectEval(tabId, code, world = "MAIN") {
-  const [r] = await chrome.scripting.executeScript({
-    target: { tabId },
+async function injectEval(tabId, code, world = "MAIN", opts = {}) {
+  const target = await buildInjectionTarget(tabId, opts);
+  const results = await chrome.scripting.executeScript({
+    target,
     func: (c) => {
       try {
         return { ok: true, value: eval(c) };
@@ -1538,7 +1786,7 @@ async function injectEval(tabId, code, world = "MAIN") {
     args: [code],
     world,
   });
-  const res = r?.result;
+  const res = unwrapInjectionResults(results, (result) => result?.ok);
   if (res && !res.ok) throw new Error(res.error);
   return res?.value;
 }

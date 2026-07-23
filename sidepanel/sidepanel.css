@@ -333,6 +333,13 @@ body {
   background: color-mix(in srgb, var(--success) 10%, var(--surface-2));
 }
 
+.sp-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
 .sp-code-value {
   font-family: var(--font-mono);
   font-size: 28px;
@@ -342,10 +349,37 @@ body {
   padding: 4px 0;
 }
 
+.sp-code-copy-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: transparent;
+  transition: background var(--duration-fast) var(--ease-out-expo),
+    color var(--duration-fast) var(--ease-out-expo);
+}
+
+.sp-code-copy-icon:hover {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.sp-code-copy-icon.is-copied {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
 .sp-code.is-claimed .sp-code-value {
   color: var(--success);
   letter-spacing: 0.02em;
   font-size: 20px;
+}
+
+.sp-code.is-claimed .sp-code-copy-icon {
+  display: none;
 }
 
 .sp-code-hint {

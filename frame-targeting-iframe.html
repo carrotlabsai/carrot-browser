@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Editor Frame Fixture</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 24px;
+    }
+
+    #editor {
+      border: 1px solid #888;
+      min-height: 96px;
+      padding: 12px;
+    }
+
+    #status {
+      color: #075985;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <h2>Iframe Editor</h2>
+  <p id="status">Waiting for Carrot...</p>
+  <div id="editor" contenteditable="true" role="textbox" aria-label="Editor body"></div>
+  <button id="inside-frame" type="button">Click inside iframe</button>
+
+  <script>
+    document.getElementById("inside-frame").addEventListener("click", () => {
+      document.getElementById("status").textContent = "Clicked inside iframe";
+    });
+  </script>
+</body>
+</html>

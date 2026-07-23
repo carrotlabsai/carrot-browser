@@ -142,12 +142,12 @@ def _check_scope(session_scope: str, cmd: dict) -> bool:
 TAB_SCOPE_COMMANDS = {
     "focused", "tabs",
     "navigate", "activateTab", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
-    "screenshot",
+    "screenshot", "resolveFrame", "clickAt",
     "readPage", "find", "getPageText", "dom", "query",
     "click", "hover", "type", "formInput", "scroll", "press",
     "fillContentEditable",
     "goBack", "goForward",
-    "readConsole", "readNetwork", "execute",
+    "readConsole", "readNetwork", "execute", "executeInFrame",
 }
 
 WINDOW_SCOPE_COMMANDS = TAB_SCOPE_COMMANDS | {
@@ -159,12 +159,12 @@ WINDOW_SCOPE_COMMANDS = TAB_SCOPE_COMMANDS | {
 
 TAB_TARGETED_COMMANDS = {
     "navigate", "activateTab", "closeTab", "reloadTab", "pinTab", "muteTab", "discardTab",
-    "screenshot",
+    "screenshot", "resolveFrame", "clickAt",
     "readPage", "find", "getPageText", "dom", "query",
     "click", "hover", "type", "formInput", "scroll", "press",
     "fillContentEditable",
     "goBack", "goForward",
-    "readConsole", "readNetwork", "execute",
+    "readConsole", "readNetwork", "execute", "executeInFrame",
 }
 
 WINDOW_TARGETED_COMMANDS = {
@@ -550,6 +550,14 @@ async def execute(
         kwargs["tabId"] = body["tabId"]
     if body.get("world"):
         kwargs["world"] = body["world"]
+    if body.get("frameId") is not None:
+        kwargs["frameId"] = body["frameId"]
+    if body.get("frameSelector"):
+        kwargs["frameSelector"] = body["frameSelector"]
+    if body.get("frameIndex") is not None:
+        kwargs["frameIndex"] = body["frameIndex"]
+    if body.get("allFrames"):
+        kwargs["allFrames"] = True
     return await _send_and_wait(browser_id, "execute", kwargs, session)
 
 
@@ -562,7 +570,49 @@ async def click(
     kwargs = {"selector": body.get("selector", ""), "index": body.get("index", 0)}
     if body.get("tabId"):
         kwargs["tabId"] = body["tabId"]
+    if body.get("frameId") is not None:
+        kwargs["frameId"] = body["frameId"]
+    if body.get("frameSelector"):
+        kwargs["frameSelector"] = body["frameSelector"]
+    if body.get("frameIndex") is not None:
+        kwargs["frameIndex"] = body["frameIndex"]
+    if body.get("allFrames"):
+        kwargs["allFrames"] = True
     return await _send_and_wait(browser_id, "click", kwargs, session)
+
+
+@app.post("/resolveFrame")
+async def resolve_frame(
+    body: dict,
+    session: Session | None = Depends(_get_session),
+    browser_id: str = Depends(_get_browser_id),
+):
+    selector = body.get("frameSelector") or body.get("selector")
+    if not selector:
+        raise HTTPException(400, "frameSelector is required")
+    kwargs = {"frameSelector": selector}
+    if body.get("tabId"):
+        kwargs["tabId"] = body["tabId"]
+    if body.get("frameIndex") is not None:
+        kwargs["frameIndex"] = body["frameIndex"]
+    return await _send_and_wait(browser_id, "resolveFrame", kwargs, session)
+
+
+@app.post("/clickAt")
+async def click_at(
+    body: dict,
+    session: Session | None = Depends(_get_session),
+    browser_id: str = Depends(_get_browser_id),
+):
+    if body.get("x") is None or body.get("y") is None:
+        raise HTTPException(400, "x and y are required")
+    kwargs = {"x": body["x"], "y": body["y"]}
+    if body.get("tabId"):
+        kwargs["tabId"] = body["tabId"]
+    for key in ("button", "coordinateSpace", "scrollIntoView"):
+        if body.get(key) is not None:
+            kwargs[key] = body[key]
+    return await _send_and_wait(browser_id, "clickAt", kwargs, session)
 
 
 @app.post("/query")
@@ -931,18 +981,22 @@ available. Many also accept `tabId`.
 
 | Command | Parameters | Description |
 |---|---|---|
-| `click` | `ref` or `selector`; optional `index`, `tabId` | Click an element. |
-| `hover` | `ref` or `selector`; optional `index`, `tabId` | Hover an element. |
-| `type` | `text`; optional `ref`, `selector`, `tabId` | Type with simulated keyboard input. |
-| `formInput` | `value`; optional `ref`, `selector`, `tabId` | Set input/select/checkbox/radio/textarea values directly. |
-| `fillContentEditable` | `text`; optional `ref`, `selector`, `maxScrolls`, `tabId` | Fill rich text/contenteditable editors. |
+| `click` | `ref` or `selector`; optional `index`, `tabId`, `frameId`, `frameSelector`, `allFrames` | Click an element. |
+| `hover` | `ref` or `selector`; optional `index`, `tabId`, `frameId`, `frameSelector`, `allFrames` | Hover an element. |
+| `type` | `text`; optional `ref`, `selector`, `tabId`, `frameId`, `frameSelector`, `allFrames` | Type with simulated keyboard input. |
+| `formInput` | `value`; optional `ref`, `selector`, `tabId`, `frameId`, `frameSelector`, `allFrames` | Set input/select/checkbox/radio/textarea values directly. |
+| `fillContentEditable` | `text`; optional `ref`, `selector`, `maxScrolls`, `tabId`, `frameId`, `frameSelector`, `allFrames` | Fill rich text/contenteditable editors. |
 | `scroll` | optional `direction`, `amount`, `ref`, `selector`, `tabId` | Scroll page or element. Directions: `up`, `down`, `left`, `right`. |
 | `press` | `key`; optional `ref`, `selector`, `tabId` | Send a key press such as `Enter`, `Tab`, `Escape`, or `ArrowDown`. |
+| `resolveFrame` | `frameSelector`; optional `frameIndex`, `tabId` | Resolve an iframe CSS selector to a Chrome `frameId`. |
+| `clickAt` | `x`, `y`; optional `tabId`, `coordinateSpace`, `scrollIntoView` | Click absolute page coordinates through the debugger protocol. |
 
 Examples:
 
 ```json
 {"type":"click","ref":"ref_42"}
+{"type":"click","selector":"#editor","frameSelector":"#tinyMCE5448_ifr"}
+{"type":"clickAt","x":283,"y":497}
 {"type":"formInput","ref":"ref_7","value":"hello@example.com"}
 {"type":"press","key":"Enter"}
 ```
@@ -954,13 +1008,15 @@ Examples:
 | `navigate` | `url`; optional `tabId` | Navigate a tab. |
 | `goBack` | optional `tabId` | Navigate back. |
 | `goForward` | optional `tabId` | Navigate forward. |
-| `execute` | `script`; optional `tabId`, `world` | Execute JavaScript in the page. Prefer page actions for normal interaction. |
+| `execute` | `script`; optional `tabId`, `world`, `frameId`, `frameSelector`, `allFrames` | Execute JavaScript in the page. Prefer page actions for normal interaction. |
+| `executeInFrame` | `script`; `frameId` or `frameSelector`; optional `tabId`, `world` | Alias command for frame-targeted JavaScript execution via `/cmd`. |
 
 Examples:
 
 ```json
 {"type":"navigate","url":"https://example.com"}
 {"type":"execute","script":"document.title","world":"MAIN"}
+{"type":"execute","frameSelector":"#tinyMCE5448_ifr","script":"document.querySelector('#editor').textContent"}
 ```
 
 ### Tabs
@@ -1578,8 +1634,8 @@ async def css_query(selector: str, limit: int = 50, tab_id: int | None = None) -
 
 
 @mcp_server.tool()
-async def click_element(ref: str | None = None, selector: str | None = None, index: int = 0, tab_id: int | None = None) -> str:
-    """Click an element. Prefer ref (from read_page) over selector."""
+async def click_element(ref: str | None = None, selector: str | None = None, index: int = 0, tab_id: int | None = None, frame_id: int | None = None, frame_selector: str | None = None) -> str:
+    """Click an element. Prefer ref (from read_page) over selector. Use frame_id or frame_selector for iframe content."""
     kwargs: dict = {}
     if ref:
         kwargs["ref"] = ref
@@ -1588,11 +1644,15 @@ async def click_element(ref: str | None = None, selector: str | None = None, ind
     kwargs["index"] = index
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     return str(await _mcp_cmd("click", **kwargs))
 
 
 @mcp_server.tool()
-async def hover(ref: str | None = None, selector: str | None = None, tab_id: int | None = None) -> str:
+async def hover(ref: str | None = None, selector: str | None = None, tab_id: int | None = None, frame_id: int | None = None, frame_selector: str | None = None) -> str:
     """Hover over an element to trigger hover states or tooltips."""
     kwargs: dict = {}
     if ref:
@@ -1601,11 +1661,15 @@ async def hover(ref: str | None = None, selector: str | None = None, tab_id: int
         kwargs["selector"] = selector
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     return str(await _mcp_cmd("hover", **kwargs))
 
 
 @mcp_server.tool()
-async def type_text(text: str, ref: str | None = None, selector: str | None = None, tab_id: int | None = None) -> str:
+async def type_text(text: str, ref: str | None = None, selector: str | None = None, tab_id: int | None = None, frame_id: int | None = None, frame_selector: str | None = None) -> str:
     """Type text into an element via simulated keyboard input."""
     kwargs: dict = {"text": text}
     if ref:
@@ -1614,11 +1678,15 @@ async def type_text(text: str, ref: str | None = None, selector: str | None = No
         kwargs["selector"] = selector
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     return str(await _mcp_cmd("type", **kwargs))
 
 
 @mcp_server.tool()
-async def form_input(value: str, ref: str | None = None, selector: str | None = None, tab_id: int | None = None) -> str:
+async def form_input(value: str, ref: str | None = None, selector: str | None = None, tab_id: int | None = None, frame_id: int | None = None, frame_selector: str | None = None) -> str:
     """Set a form field value directly. Works with select, checkbox, radio, input, textarea, contenteditable."""
     kwargs: dict = {"value": value}
     if ref:
@@ -1627,11 +1695,15 @@ async def form_input(value: str, ref: str | None = None, selector: str | None = 
         kwargs["selector"] = selector
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     return str(await _mcp_cmd("formInput", **kwargs))
 
 
 @mcp_server.tool()
-async def fill_content_editable(text: str, ref: str | None = None, selector: str | None = None, max_scrolls: int = 24, tab_id: int | None = None) -> str:
+async def fill_content_editable(text: str, ref: str | None = None, selector: str | None = None, max_scrolls: int = 24, tab_id: int | None = None, frame_id: int | None = None, frame_selector: str | None = None) -> str:
     """Fill a rich text / contenteditable element (Gmail compose, Slack, etc.)."""
     kwargs: dict = {"text": text, "maxScrolls": max_scrolls}
     if ref:
@@ -1640,6 +1712,10 @@ async def fill_content_editable(text: str, ref: str | None = None, selector: str
         kwargs["selector"] = selector
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     return str(await _mcp_cmd("fillContentEditable", **kwargs))
 
 
@@ -1741,6 +1817,31 @@ async def reload_tab(tab_id: int | None = None, bypass_cache: bool = False) -> s
 
 
 @mcp_server.tool()
+async def resolve_frame(frame_selector: str, tab_id: int | None = None, frame_index: int | None = None) -> str:
+    """Resolve an iframe CSS selector to a Chrome frameId for later frame-targeted commands."""
+    kwargs: dict = {"frameSelector": frame_selector}
+    if tab_id is not None:
+        kwargs["tabId"] = tab_id
+    if frame_index is not None:
+        kwargs["frameIndex"] = frame_index
+    return str(await _mcp_cmd("resolveFrame", **kwargs))
+
+
+@mcp_server.tool()
+async def click_at(x: float, y: float, tab_id: int | None = None, coordinate_space: str = "page", scroll_into_view: bool = True) -> str:
+    """Click absolute page coordinates using Chrome debugger input dispatch."""
+    kwargs: dict = {
+        "x": x,
+        "y": y,
+        "coordinateSpace": coordinate_space,
+        "scrollIntoView": scroll_into_view,
+    }
+    if tab_id is not None:
+        kwargs["tabId"] = tab_id
+    return str(await _mcp_cmd("clickAt", **kwargs))
+
+
+@mcp_server.tool()
 async def take_screenshot(window_id: int | None = None, tab_id: int | None = None) -> str:
     """Capture a screenshot. Pass tab_id to target a specific tab."""
     kwargs: dict = {}
@@ -1752,12 +1853,16 @@ async def take_screenshot(window_id: int | None = None, tab_id: int | None = Non
 
 
 @mcp_server.tool()
-async def execute_js(script: str, tab_id: int | None = None) -> str:
+async def execute_js(script: str, tab_id: int | None = None, frame_id: int | None = None, frame_selector: str | None = None) -> str:
     """Execute JavaScript in the page. May fail on Trusted Types sites.
     Prefer read_page + click/type for standard interaction."""
     kwargs: dict = {"script": script}
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     return str(await _mcp_cmd("execute", **kwargs))
 
 

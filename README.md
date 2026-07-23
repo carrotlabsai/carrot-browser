@@ -5,14 +5,14 @@
 <h1 align="center">Carrot</h1>
 
 <p align="center">
-  <strong>The bridge between AI agents and your browser.</strong><br/>
-  Built by <a href="https://carrotlabs.ai">Carrot Labs</a>.
+  <strong>The bridge between AI agents and your browser.</strong>
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="#security-model">Security</a> ·
   <a href="#api-reference">API</a> ·
+  <a href="CONDUCT.md">Development</a> ·
   <a href="#self-hosting">Self-host</a>
 </p>
 
@@ -48,67 +48,19 @@ Carrot is a Chrome extension plus a small bridge server that lets AI agents safe
 
 ## Quick Start
 
-### 1. Install the Chrome Extension
+<p align="center">
+  <a href="https://github.com/carrotlabsai/carrot-browser/raw/main/carrot-browser-extension.zip">
+    <kbd>Download the Chrome extension</kbd>
+  </a>
+</p>
 
-1. Clone this repo
-2. Open `chrome://extensions/` in Chrome
-3. Enable "Developer mode"
-4. Click "Load unpacked" and select this folder
-5. Click the Carrot icon in your toolbar — the side panel will slide in
+Open Carrot from the Chrome toolbar, click **Pair an Agent**, and paste the
+copied prompt into your agent.
 
-### 2a. Use the Community-Hosted Bridge
-
-The extension ships pointing at `https://browser.carrotlabs.ai`, a
-community-hosted instance of the same open-source bridge server in this repo.
-No server setup is required: install the extension, open the side panel,
-generate a pairing code, and give that code to your agent.
-
-This hosted instance is optional. You can run the same `server.py` yourself if
-you prefer to operate your own bridge or keep traffic on localhost.
-
-### 2b. Run Your Own Local Bridge
-
-```bash
-pip install fastapi uvicorn[standard]
-python server.py --no-auth --port 7777
-```
-
-Then open the extension options (right-click the toolbar icon > Options) and
-set the Server URL to `http://127.0.0.1:7777`. No authentication needed in
-local mode.
-
-```bash
-# Test the bridge directly
-curl -s http://127.0.0.1:7777/status
-curl -s -X POST http://127.0.0.1:7777/cmd \
-  -H 'Content-Type: application/json' \
-  -d '{"type":"readPage"}'
-```
-
-To authenticate an agent:
-
-1. Click the Carrot icon — the side panel opens
-2. Choose a scope (This Tab, This Window, or All Tabs)
-3. Click **Generate Pairing Code**
-4. Give the 6-character code to your agent
-
-The agent claims the code:
-
-```bash
-curl -s -X POST https://browser.carrotlabs.ai/sessions/claim \
-  -H 'Content-Type: application/json' \
-  -d '{"code": "A3X7K2", "agent_name": "my-agent"}'
-# Returns: {session_token, scope, browser_id, expires_in}
-```
-
-Then uses the token for all commands:
-
-```bash
-curl -s -X POST https://browser.carrotlabs.ai/cmd \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <session_token>' \
-  -d '{"type":"readPage"}'
-```
+The extension uses the community-hosted bridge at
+`https://browser.carrotlabs.ai` by default. If you want to run it yourself, run
+`server.py` locally and add that address in the extension's
+**Settings -> Server URL** field.
 
 ## Security Model
 
