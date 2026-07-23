@@ -466,7 +466,7 @@ async function resolvePagePointToViewport(tabId, x, y, scrollIntoView) {
           pageY < window.scrollY ||
           pageY > window.scrollY + window.innerHeight
         ) {
-          window.scrollTo(targetX, targetY);
+          window.scrollTo({ left: targetX, top: targetY, behavior: "instant" });
         }
       }
       return {
@@ -1282,10 +1282,12 @@ async function resolveFrameId(tabId, iframeSelector, index = 0) {
           const src = el.src || attrSrc || "";
           const id = el.id || "";
           const name = el.name || el.getAttribute?.("name") || "";
+          // Index must be computed against the top document — the same root
+          // resolveFrameId used for querySelectorAll. Nested frames are absent
+          // from that list (indexAmong stays -1) and must not win on local index.
           let indexAmong = -1;
           try {
-            const root = el.ownerDocument || document;
-            indexAmong = Array.from(root.querySelectorAll(selector)).indexOf(el);
+            indexAmong = Array.from(window.top.document.querySelectorAll(selector)).indexOf(el);
           } catch {}
           const isBlankish = (value) => {
             const v = String(value || "").trim();
@@ -1298,7 +1300,7 @@ async function resolveFrameId(tabId, iframeSelector, index = 0) {
           const attrMatch = !isBlankish(expected.attrSrc) && attrSrc === expected.attrSrc;
           return {
             matches: true,
-            indexMatch: indexAmong === expected.index,
+            indexMatch: indexAmong >= 0 && indexAmong === expected.index,
             strongIdentity: idMatch || nameMatch,
             srcIdentity: srcMatch || attrMatch,
             indexAmong,
