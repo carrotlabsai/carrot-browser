@@ -1287,15 +1287,20 @@ async function resolveFrameId(tabId, iframeSelector, index = 0) {
             const root = el.ownerDocument || document;
             indexAmong = Array.from(root.querySelectorAll(selector)).indexOf(el);
           } catch {}
-          const identityMatch =
-            (expected.id && id === expected.id) ||
-            (expected.name && name === expected.name) ||
-            (expected.src && (src === expected.src || attrSrc === expected.attrSrc)) ||
-            (expected.attrSrc && attrSrc === expected.attrSrc) ||
-            indexAmong === expected.index;
+          const isBlankish = (value) => {
+            const v = String(value || "").trim();
+            return !v || v === "about:blank" || v === "about:srcdoc";
+          };
+          const idMatch = !!(expected.id && id === expected.id);
+          const nameMatch = !!(expected.name && name === expected.name);
+          // Empty/about:blank src values are not discriminating — ignore them.
+          const srcMatch = !isBlankish(expected.src) && (src === expected.src || (!isBlankish(expected.attrSrc) && attrSrc === expected.attrSrc));
+          const attrMatch = !isBlankish(expected.attrSrc) && attrSrc === expected.attrSrc;
           return {
             matches: true,
-            identityMatch: !!identityMatch,
+            indexMatch: indexAmong === expected.index,
+            strongIdentity: idMatch || nameMatch,
+            srcIdentity: srcMatch || attrMatch,
             indexAmong,
             src,
             attrSrc,
@@ -1313,21 +1318,37 @@ async function resolveFrameId(tabId, iframeSelector, index = 0) {
       }],
     });
     const matchedFrames = frameElementMatches
-      .filter((entry) => entry.frameId !== 0 && entry.result?.matches)
-      .sort((a, b) => a.frameId - b.frameId);
-    if (matchedFrames.length) {
-      const byIdentity = matchedFrames.find((entry) => entry.result?.identityMatch);
-      const byIndex = matchedFrames.find((entry) => entry.result?.indexAmong === frameIndex)
-        || matchedFrames[frameIndex];
-      const matched = byIdentity || byIndex;
-      if (matched) {
-        return {
-          ...iframe,
-          frameId: matched.frameId,
-          frameUrl: matched.result?.src || "",
-          matchedBy: byIdentity ? "frameElement" : "frameElement-index",
-        };
-      }
+      .filter((entry) => entry.frameId !== 0 && entry.result?.matches);
+
+    // DOM index is authoritative for same-origin frames.
+    const byIndex = matchedFrames.find((entry) => entry.result?.indexMatch);
+    if (byIndex) {
+      return {
+        ...iframe,
+        frameId: byIndex.frameId,
+        frameUrl: byIndex.result?.src || "",
+        matchedBy: "frameElement-index",
+      };
+    }
+
+    const byStrong = matchedFrames.filter((entry) => entry.result?.strongIdentity);
+    if (byStrong.length === 1) {
+      return {
+        ...iframe,
+        frameId: byStrong[0].frameId,
+        frameUrl: byStrong[0].result?.src || "",
+        matchedBy: "frameElement",
+      };
+    }
+
+    const bySrc = matchedFrames.filter((entry) => entry.result?.srcIdentity);
+    if (bySrc.length === 1) {
+      return {
+        ...iframe,
+        frameId: bySrc[0].frameId,
+        frameUrl: bySrc[0].result?.src || "",
+        matchedBy: "frameElement-src",
+      };
     }
   } catch {}
 
@@ -1336,32 +1357,33 @@ async function resolveFrameId(tabId, iframeSelector, index = 0) {
   const candidates = frames.filter((frame) => frame.frameId !== 0);
   const normalizedSrc = normalizeUrlForFrameMatch(iframe.src || iframe.attrSrc);
   const normalizedAttrSrc = normalizeUrlForFrameMatch(iframe.attrSrc);
-
-  // DOM selection already pinned a specific iframe; a unique URL match is
-  // enough. If several frames share that URL, disambiguate with frameIndex.
-  const pickUrlMatch = (matches, matchedBy) => {
-    if (!matches.length) return null;
-    if (matches.length === 1) {
-      return { ...iframe, frameId: matches[0].frameId, frameUrl: matches[0].url, matchedBy };
-    }
-    if (frameIndex < 0 || frameIndex >= matches.length) return null;
-    const chosen = matches[frameIndex];
-    return { ...iframe, frameId: chosen.frameId, frameUrl: chosen.url, matchedBy: `${matchedBy}-index` };
+  const isBlankishUrl = (value) => {
+    const v = String(value || "").trim();
+    return !v || v === "about:blank" || v === "about:srcdoc";
   };
 
-  const exactMatches = candidates.filter((frame) => {
-    const frameUrl = normalizeUrlForFrameMatch(frame.url);
-    return frameUrl && (frameUrl === normalizedSrc || frameUrl === normalizedAttrSrc);
-  });
-  const exact = pickUrlMatch(exactMatches, "url");
-  if (exact) return exact;
+  // Unique URL match only. webNavigation order is not DOM order, so never
+  // disambiguate same-URL frames with frameIndex here.
+  const pickUniqueUrlMatch = (matches, matchedBy) => {
+    if (matches.length !== 1) return null;
+    return { ...iframe, frameId: matches[0].frameId, frameUrl: matches[0].url, matchedBy };
+  };
 
-  const looseMatches = candidates.filter((frame) => {
-    const frameUrl = normalizeUrlForFrameMatch(frame.url);
-    return normalizedSrc && frameUrl && (frameUrl.startsWith(normalizedSrc) || normalizedSrc.startsWith(frameUrl));
-  });
-  const loose = pickUrlMatch(looseMatches, "url-prefix");
-  if (loose) return loose;
+  if (!isBlankishUrl(normalizedSrc) || !isBlankishUrl(normalizedAttrSrc)) {
+    const exactMatches = candidates.filter((frame) => {
+      const frameUrl = normalizeUrlForFrameMatch(frame.url);
+      return frameUrl && (frameUrl === normalizedSrc || frameUrl === normalizedAttrSrc);
+    });
+    const exact = pickUniqueUrlMatch(exactMatches, "url");
+    if (exact) return exact;
+
+    const looseMatches = candidates.filter((frame) => {
+      const frameUrl = normalizeUrlForFrameMatch(frame.url);
+      return normalizedSrc && frameUrl && (frameUrl.startsWith(normalizedSrc) || normalizedSrc.startsWith(frameUrl));
+    });
+    const loose = pickUniqueUrlMatch(looseMatches, "url-prefix");
+    if (loose) return loose;
+  }
 
   // Only safe when the caller asked for the first match and there is exactly
   // one child frame in the tab — otherwise this can bind an unrelated frame.
