@@ -1378,13 +1378,6 @@ async function resolveFrameId(tabId, iframeSelector, index = 0) {
     });
     const exact = pickUniqueUrlMatch(exactMatches, "url");
     if (exact) return exact;
-
-    const looseMatches = candidates.filter((frame) => {
-      const frameUrl = normalizeUrlForFrameMatch(frame.url);
-      return normalizedSrc && frameUrl && (frameUrl.startsWith(normalizedSrc) || normalizedSrc.startsWith(frameUrl));
-    });
-    const loose = pickUniqueUrlMatch(looseMatches, "url-prefix");
-    if (loose) return loose;
   }
 
   // Only safe when the caller asked for the first match and there is exactly
