@@ -869,7 +869,7 @@ async function handleCommand(cmd) {
 
       case "resolveFrame": {
         const tabId = await getTab();
-        const frame = await resolveFrameId(tabId, cmd.frameSelector || cmd.selector, cmd.frameIndex || cmd.index || 0);
+        const frame = await resolveFrameId(tabId, cmd.frameSelector || cmd.selector, cmd.frameIndex ?? cmd.index ?? 0);
         result = { tabId, ...frame };
         break;
       }
@@ -1221,7 +1221,7 @@ function frameInjectionOptions(cmd) {
 
 async function buildInjectionTarget(tabId, opts = {}) {
   if (opts.frameSelector && opts.frameId === undefined) {
-    const frame = await resolveFrameId(tabId, opts.frameSelector, opts.frameIndex || 0);
+    const frame = await resolveFrameId(tabId, opts.frameSelector, opts.frameIndex ?? 0);
     return { tabId, frameIds: [frame.frameId] };
   }
   if (opts.frameId !== undefined && opts.frameId !== null) {
@@ -1248,7 +1248,8 @@ function unwrapInjectionResults(results, preferSuccess = () => false) {
 
 async function resolveFrameId(tabId, iframeSelector, index = 0) {
   if (!iframeSelector) throw new Error("resolveFrame requires frameSelector");
-  const frameIndex = Number(index) || 0;
+  const frameIndex = Number(index ?? 0);
+  if (!Number.isInteger(frameIndex) || frameIndex < 0) throw new Error("frameIndex must be a non-negative integer");
   const [iframeResult] = await chrome.scripting.executeScript({
     target: { tabId },
     func: (selector, idx) => {
