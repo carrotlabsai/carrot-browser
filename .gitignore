@@ -10,4 +10,5 @@ build/
 uv.lock
 .local/
 *.zip
+!carrot-browser-extension.zip
 .cursor/

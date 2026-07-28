@@ -203,8 +203,10 @@ async def click(
     selector: str | None = None,
     index: int | None = None,
     tab_id: int | None = None,
+    frame_id: int | None = None,
+    frame_selector: str | None = None,
 ) -> str:
-    """Click an element. Prefer ref (from read_page) over selector."""
+    """Click an element. Prefer ref (from read_page) over selector. Use frame_id or frame_selector for iframe content."""
     kwargs = {}
     if ref:
         kwargs["ref"] = ref
@@ -214,6 +216,10 @@ async def click(
         kwargs["index"] = index
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     result = await _bridge_cmd("click", **kwargs)
     return str(result)
 
@@ -223,6 +229,8 @@ async def hover(
     ref: str | None = None,
     selector: str | None = None,
     tab_id: int | None = None,
+    frame_id: int | None = None,
+    frame_selector: str | None = None,
 ) -> str:
     """Hover over an element to trigger hover states or tooltips."""
     kwargs = {}
@@ -232,6 +240,10 @@ async def hover(
         kwargs["selector"] = selector
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     result = await _bridge_cmd("hover", **kwargs)
     return str(result)
 
@@ -242,6 +254,8 @@ async def type_text(
     ref: str | None = None,
     selector: str | None = None,
     tab_id: int | None = None,
+    frame_id: int | None = None,
+    frame_selector: str | None = None,
 ) -> str:
     """Type text into an element via simulated keyboard input."""
     kwargs: dict = {"text": text}
@@ -251,6 +265,10 @@ async def type_text(
         kwargs["selector"] = selector
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     result = await _bridge_cmd("type", **kwargs)
     return str(result)
 
@@ -261,6 +279,8 @@ async def form_input(
     ref: str | None = None,
     selector: str | None = None,
     tab_id: int | None = None,
+    frame_id: int | None = None,
+    frame_selector: str | None = None,
 ) -> str:
     """Set a form field value directly. Works with select, checkbox, radio,
     input, textarea, and contenteditable elements.
@@ -272,6 +292,10 @@ async def form_input(
         kwargs["selector"] = selector
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     result = await _bridge_cmd("formInput", **kwargs)
     return str(result)
 
@@ -283,6 +307,8 @@ async def fill_content_editable(
     selector: str | None = None,
     max_scrolls: int | None = None,
     tab_id: int | None = None,
+    frame_id: int | None = None,
+    frame_selector: str | None = None,
 ) -> str:
     """Fill a rich text / contenteditable element (Gmail compose, Slack, etc.).
     Auto-scrolls to find the element if needed.
@@ -296,6 +322,10 @@ async def fill_content_editable(
         kwargs["maxScrolls"] = max_scrolls
     if tab_id is not None:
         kwargs["tabId"] = tab_id
+    if frame_id is not None:
+        kwargs["frameId"] = frame_id
+    if frame_selector:
+        kwargs["frameSelector"] = frame_selector
     result = await _bridge_cmd("fillContentEditable", **kwargs)
     return str(result)
 
@@ -566,6 +596,43 @@ async def read_network(
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
+async def resolve_frame(
+    frame_selector: str,
+    tab_id: int | None = None,
+    frame_index: int | None = None,
+) -> str:
+    """Resolve an iframe CSS selector to a Chrome frameId for later frame-targeted commands."""
+    kwargs: dict = {"frameSelector": frame_selector}
+    if tab_id is not None:
+        kwargs["tabId"] = tab_id
+    if frame_index is not None:
+        kwargs["frameIndex"] = frame_index
+    result = await _bridge_cmd("resolveFrame", **kwargs)
+    return str(result)
+
+
+@mcp.tool()
+async def click_at(
+    x: float,
+    y: float,
+    tab_id: int | None = None,
+    coordinate_space: str = "page",
+    scroll_into_view: bool = True,
+) -> str:
+    """Click absolute page coordinates using Chrome debugger input dispatch."""
+    kwargs: dict = {
+        "x": x,
+        "y": y,
+        "coordinateSpace": coordinate_space,
+        "scrollIntoView": scroll_into_view,
+    }
+    if tab_id is not None:
+        kwargs["tabId"] = tab_id
+    result = await _bridge_cmd("clickAt", **kwargs)
+    return str(result)
+
+
+@mcp.tool()
 async def screenshot(
     window_id: int | None = None,
     tab_id: int | None = None,
@@ -588,6 +655,8 @@ async def execute_js(
     script: str,
     tab_id: int | None = None,
     world: str | None = None,
+    frame_id: int | None = None,
+    frame_selector: str | None = None,
 ) -> str:
     """Execute JavaScript in the page. May fail on Trusted Types sites (YouTube, etc.).
     Prefer read_page + click/type for standard interaction.
@@ -597,6 +666,10 @@ async def execute_js(
         body["tabId"] = tab_id
     if world:
         body["world"] = world
+    if frame_id is not None:
+        body["frameId"] = frame_id
+    if frame_selector:
+        body["frameSelector"] = frame_selector
     result = await _bridge_post("/execute", body)
     return str(result)
 

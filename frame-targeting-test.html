@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Carrot Frame Targeting Test</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 32px;
+      max-width: 900px;
+    }
+
+    iframe {
+      border: 2px solid #333;
+      height: 320px;
+      width: 100%;
+    }
+
+    code {
+      background: #f3f3f3;
+      padding: 2px 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Carrot Frame Targeting Test</h1>
+  <p>
+    This page mimics a TinyMCE-style editor inside an iframe. Use
+    <code>#tinyMCE5448_ifr</code> as the frame selector.
+  </p>
+  <p id="main-status">Main frame is unchanged.</p>
+  <button id="main-button" type="button">Main-frame button</button>
+  <iframe id="tinyMCE5448_ifr" title="Editor iframe" src="./frame-targeting-iframe.html"></iframe>
+</body>
+</html>

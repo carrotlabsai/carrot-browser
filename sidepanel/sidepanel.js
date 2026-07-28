@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 const DEFAULT_SERVER = "https://browser.carrotlabs.ai";
+const SKILL_URL = "https://github.com/carrotlabsai/carrot-browser/blob/main/SKILL.md";
 const MAX_ACTIVITY = 120;
 
 // --- Elements ----------------------------------------------------------------
@@ -23,6 +24,7 @@ const codeDisplay = document.getElementById("codeDisplay");
 const pairingCodeEl = document.getElementById("pairingCode");
 const codeHintEl = document.getElementById("codeHint");
 const copyCodeBtn = document.getElementById("copyCode");
+const copyRawCodeBtn = document.getElementById("copyRawCode");
 const agentStack = document.getElementById("agentStack");
 
 // Activity feed + sessions
@@ -298,13 +300,20 @@ generateBtn.addEventListener("click", () => {
 scopeSelect.addEventListener("change", updateScopeIcon);
 
 copyCodeBtn.addEventListener("click", async () => {
-  const code = pairingCodeEl.textContent;
-  if (code && code !== "—") {
-    await navigator.clipboard.writeText(code);
-    const prev = copyCodeBtn.textContent;
-    copyCodeBtn.textContent = "Copied";
-    setTimeout(() => (copyCodeBtn.textContent = prev), 1400);
-  }
+  const code = getCurrentPairingCode();
+  if (!code) return;
+
+  await navigator.clipboard.writeText(buildAgentPrompt(code));
+  flashButtonLabel(copyCodeBtn, "Copied");
+});
+
+copyRawCodeBtn.addEventListener("click", async () => {
+  const code = getCurrentPairingCode();
+  if (!code) return;
+
+  await navigator.clipboard.writeText(code);
+  copyRawCodeBtn.classList.add("is-copied");
+  setTimeout(() => copyRawCodeBtn.classList.remove("is-copied"), 900);
 });
 
 openSettingsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
@@ -366,6 +375,22 @@ setInterval(refreshStatus, 2500);
 
 function truncate(s, n) {
   return s && s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+function getCurrentPairingCode() {
+  const code = pairingCodeEl.textContent?.trim();
+  if (!code || code === "—" || code === "Claimed") return null;
+  return code;
+}
+
+function buildAgentPrompt(code) {
+  return `connect to my browser using the skill at ${SKILL_URL} or MCP if installed. Code: ${code}.`;
+}
+
+function flashButtonLabel(button, label) {
+  const prev = button.textContent;
+  button.textContent = label;
+  setTimeout(() => (button.textContent = prev), 1400);
 }
 
 function resetPairingCode() {
