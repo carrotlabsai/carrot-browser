@@ -95,6 +95,19 @@ chrome.storage.onChanged.addListener((changes) => {
 let wsReconnectDelay = 1000;
 let wsReconnectTimerId = null;
 
+// Sleep or a network change can kill the socket without Chrome noticing, so
+// readyState stays OPEN. Liveness is judged by whether the server replies.
+const WS_HEALTH_TICK_MS = 5000;
+const WS_IDLE_PROBE_MS = 20000;
+const WS_REPLY_TIMEOUT_MS = 8000;
+const WS_SLEEP_GAP_MS = 30000;
+const PAIRING_RETRY_WINDOW_MS = 30000;
+
+let wsLastHeardAt = 0;
+let wsAwaitingReplySince = 0;
+let wsLastHealthTickAt = Date.now();
+let pendingPairing = null;
+
 function getWsUrl() {
   let base = serverUrl.replace(/\/+$/, "");
   if (base.startsWith("https://")) {
@@ -138,12 +151,18 @@ function connectWebSocket() {
     connected = true;
     wsReconnectDelay = 1000;
     clearWsReconnectTimer();
+    wsLastHeardAt = Date.now();
+    wsAwaitingReplySince = 0;
+    flushPendingPairing();
   };
 
   socket.onmessage = (event) => {
     if (ws !== socket) return;
+    wsLastHeardAt = Date.now();
+    wsAwaitingReplySince = 0;
     try {
       const msg = JSON.parse(event.data);
+      if (msg.action === "pairing_code") pendingPairing = null;
       if (msg.action) {
         // Server-to-extension messages (pairing responses, etc.) — forward to popup
         chrome.runtime.sendMessage(msg).catch(() => {});
@@ -203,6 +222,50 @@ function sendToServer(data) {
   }
   return false;
 }
+
+// For actions the server always answers; a missing reply marks the socket dead.
+function sendRequest(data) {
+  if (!sendToServer(data)) return false;
+  if (!wsAwaitingReplySince) wsAwaitingReplySince = Date.now();
+  return true;
+}
+
+function flushPendingPairing() {
+  if (!pendingPairing) return false;
+  if (Date.now() - pendingPairing.requestedAt > PAIRING_RETRY_WINDOW_MS) {
+    pendingPairing = null;
+    return false;
+  }
+  return sendRequest({ action: "create_pairing", scope: pendingPairing.scope });
+}
+
+function restartWebSocket() {
+  const stale = ws;
+  ws = null;
+  connected = false;
+  wsAwaitingReplySince = 0;
+  if (stale) {
+    try { stale.close(); } catch {}
+  }
+  wsReconnectDelay = 1000;
+  connectWebSocket();
+}
+
+function checkWsHealth() {
+  const now = Date.now();
+  const slept = now - wsLastHealthTickAt > WS_SLEEP_GAP_MS;
+  wsLastHealthTickAt = now;
+  if (!useWs || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (slept || (wsAwaitingReplySince && now - wsAwaitingReplySince > WS_REPLY_TIMEOUT_MS)) {
+    restartWebSocket();
+    return;
+  }
+  if (!wsAwaitingReplySince && now - wsLastHeardAt > WS_IDLE_PROBE_MS) {
+    sendRequest({ action: "list_sessions" });
+  }
+}
+
+setInterval(checkWsHealth, WS_HEALTH_TICK_MS);
 
 // ---------------------------------------------------------------------------
 // Legacy HTTP polling (for --no-auth local mode)
@@ -282,22 +345,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "create_pairing") {
-    const ok = sendToServer({
-      action: "create_pairing",
-      scope: msg.scope || "browser",
-    });
+    pendingPairing = { scope: msg.scope || "browser", requestedAt: Date.now() };
+    const ok = flushPendingPairing();
+    if (!ok && useWs) connectWebSocket();
     sendResponse({ sent: ok });
     return false;
   }
 
   if (msg.type === "list_sessions") {
-    const ok = sendToServer({ action: "list_sessions" });
+    const ok = sendRequest({ action: "list_sessions" });
     sendResponse({ sent: ok });
     return false;
   }
 
   if (msg.type === "revoke_session") {
-    const ok = sendToServer({
+    const ok = sendRequest({
       action: "revoke_session",
       session_id: msg.session_id,
     });
