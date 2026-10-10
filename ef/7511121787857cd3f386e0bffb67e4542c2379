@@ -1,0 +1,40 @@
+manifest.json
+  s_3fc4a9a171d301::t_8c3824526dbf0c 4
+CHANGELOG.md
+  s_3fc4a9a171d301::t_790f7c242ad93e 12-22
+background.js
+  s_3fc4a9a171d301::t_f7f29fde9e4ef4 98-110
+  s_3fc4a9a171d301::t_a0b63ce860bdaa 348-350,356,362
+  s_3fc4a9a171d301::t_c69c69656ff640 154-156,161-162,165
+  s_3fc4a9a171d301::t_f478e1c12ccdc8 226-269
+sidepanel/sidepanel.js
+  s_3fc4a9a171d301::t_2d8d2a2241ecff 294-297,299-300,303-306
+  s_3fc4a9a171d301::t_f47e413da594ba 342-343,345
+  s_3fc4a9a171d301::t_33f82219b2d59a 10
+  s_3fc4a9a171d301::t_f7a2aaffb3aed6 41
+  s_a82c2673d8d878::t_ccd6689dcc3111 307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef7511121787857cd3f386e0bffb67e4542c2379",
+  "prompts": {},
+  "sessions": {
+    "s_3fc4a9a171d301": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3b8fbd7b-70b0-45e5-91e5-a3a6b4e64d22",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chris Acker <christopheracker1@gmail.com>"
+    },
+    "s_a82c2673d8d878": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "9ffcda0a-57c0-49d6-b779-1bad5a7ae9e8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chris Acker <christopheracker1@gmail.com>"
+    }
+  }
+}
