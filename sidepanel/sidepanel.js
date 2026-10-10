@@ -7,6 +7,7 @@
 const DEFAULT_SERVER = "https://browser.carrotlabs.ai";
 const SKILL_URL = "https://github.com/carrotlabsai/carrot-browser/blob/main/SKILL.md";
 const MAX_ACTIVITY = 120;
+const PAIRING_TIMEOUT_MS = 20000;
 
 // --- Elements ----------------------------------------------------------------
 const shell = document.querySelector(".sp-shell");
@@ -37,6 +38,7 @@ let activity = [];
 let sessions = [];
 let connected = false;
 let codeHideTimer = null;
+let pairingTimer = null;
 
 // ---------------------------------------------------------------------------
 // Scope selector options (current tab / window / browser)
@@ -289,13 +291,19 @@ generateBtn.addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "create_pairing", scope });
   resetPairingCode();
   generateBtn.disabled = true;
-  const label = generateBtn.querySelector("span");
-  if (label) label.textContent = "Requesting…";
-  setTimeout(() => {
+  setPairButtonLabel("Requesting…");
+  clearTimeout(pairingTimer);
+  pairingTimer = setTimeout(() => {
+    pairingTimer = null;
     generateBtn.disabled = false;
-    if (label) label.textContent = "Pair an Agent";
-  }, 3000);
+    setPairButtonLabel("Bridge unreachable · Retry");
+  }, PAIRING_TIMEOUT_MS);
 });
+
+function setPairButtonLabel(text) {
+  const label = generateBtn.querySelector("span");
+  if (label) label.textContent = text;
+}
 
 scopeSelect.addEventListener("change", updateScopeIcon);
 
@@ -331,11 +339,10 @@ chrome.runtime.onMessage.addListener((msg) => {
       codeDisplay.hidden = false;
       codeDisplay.classList.remove("is-claimed");
       copyCodeBtn.hidden = false;
+      clearTimeout(pairingTimer);
+      pairingTimer = null;
       generateBtn.disabled = false;
-      {
-        const label = generateBtn.querySelector("span");
-        if (label) label.textContent = "Pair an Agent";
-      }
+      setPairButtonLabel("Pair an Agent");
       break;
     case "sessions_list":
       sessions = msg.sessions || [];
