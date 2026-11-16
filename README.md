@@ -123,6 +123,10 @@ your bridge instance. For the community-hosted instance:
 
 The agent can then use the `claim_session` tool to pair with your browser at runtime.
 
+`take_screenshot` returns MCP image content (PNG, at most 1280 px wide by
+default) plus a text note with the CSS viewport size and devicePixelRatio, so
+the agent can see the page and map image coordinates to `click_at`.
+
 #### Optional Local MCP Adapter
 
 If your MCP client needs a local process, run the optional adapter and point it
@@ -182,20 +186,27 @@ All accept `ref` (from readPage) or `selector` (CSS).
 | `formInput` | Set form values (select, checkbox, radio, etc.) |
 | `fillContentEditable` | Rich text editors (Gmail, Slack) |
 | `scroll` | Scroll page or element |
-| `press` | Send keyboard key |
+| `press` | Press a key or shortcut (`Enter`, `Shift+Tab`, `Meta+v`) as trusted input |
+
+On a `<select>`, `formInput` returns the value read shortly after the change
+event, so React-controlled selects report the value they settled on.
 
 ### Navigation
 
 | Command | Description |
 |---|---|
-| `navigate` | Go to URL |
-| `goBack` / `goForward` | Browser history |
+| `navigate` | Go to URL and wait for the page to load |
+| `goBack` / `goForward` | Browser history, waiting for the page to load |
+
+Navigation commands, `reloadTab`, and `createTab` accept `waitUntil` (`load`
+by default, `domcontentloaded`, or `none`) and `timeoutMs` (default 20000), and
+return the final `url` and `title`.
 
 ### Tab & Window Management
 
 | Command | Description |
 |---|---|
-| `createTab` / `closeTab` / `reloadTab` | Tab lifecycle |
+| `createTab` / `closeTab` / `reloadTab` | Tab lifecycle (create and reload wait for the page to load) |
 | `groupTabs` / `ungroupTabs` | Tab groups |
 | `createWindow` / `closeWindow` / `resizeWindow` | Window lifecycle |
 
@@ -215,7 +226,7 @@ All accept `ref` (from readPage) or `selector` (CSS).
 | `/tabs` | All open tabs |
 | `/focused` | Active tab in last-focused window |
 | `/windows` | All windows with tabs |
-| `/screenshot?tabId=123` | Tab screenshot as data URL; omitting `tabId` captures the visible tab |
+| `/screenshot?tabId=123` | Tab screenshot as data URL with image size and CSS viewport metrics; omitting `tabId` captures the visible tab; `maxWidth=1280` downscales |
 | `/history?q=search` | Browser history search |
 | `/bookmarks?q=search` | Bookmark search |
 
