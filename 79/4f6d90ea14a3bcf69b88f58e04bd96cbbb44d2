@@ -1,0 +1,20 @@
+background.js
+  s_6af1f0fb32769f::t_6f8d734922f402 2314
+  s_6af1f0fb32769f::t_d90d6e1f626ce1 2328-2334
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "794f6d90ea14a3bcf69b88f58e04bd96cbbb44d2",
+  "prompts": {},
+  "sessions": {
+    "s_6af1f0fb32769f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "66361872-0e67-44d2-b49a-f266e070c0d1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chris Acker <christopheracker1@gmail.com>"
+    }
+  }
+}
