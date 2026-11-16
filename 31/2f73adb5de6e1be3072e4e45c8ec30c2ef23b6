@@ -1,0 +1,28 @@
+tests/test_shared_helpers.py
+  s_3481738b3158de::t_43476fc720e956 1-2
+server.py
+  s_3481738b3158de::t_a150762a6d2370 76
+  s_3481738b3158de::t_e256a9bf1dd273 123-124
+  s_3481738b3158de::t_3a45cca08141f7 96-103,106-108,114-122,125-128
+tests/test_log_redaction.py
+  s_3481738b3158de::t_beb102ab840bfa 46
+  s_3481738b3158de::t_0c56036be2398c 49-71
+  s_3481738b3158de::t_895205a5fd6c24 41-45,47-48
+  s_3481738b3158de::t_a4fcaeb7a69e1e 25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "312f73adb5de6e1be3072e4e45c8ec30c2ef23b6",
+  "prompts": {},
+  "sessions": {
+    "s_3481738b3158de": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "8e45047a-fe61-4b02-aeac-488831eba32c",
+        "model": "claude-opus-5-5-high-fast"
+      },
+      "human_author": "Chris Acker <christopheracker1@gmail.com>"
+    }
+  }
+}
