@@ -22,6 +22,7 @@ def test_redact_secrets_replaces_secret_query_values():
     assert server.redact_secrets(f"/cb?TOKEN={TOKEN}") == "/cb?TOKEN=[REDACTED]"
     assert server.redact_secrets(f"/x?session_token={TOKEN}#frag") == "/x?session_token=[REDACTED]#frag"
     assert server.redact_secrets(f'"GET /x?api_key={TOKEN} HTTP/1.1"') == '"GET /x?api_key=[REDACTED] HTTP/1.1"'
+    assert server.redact_secrets(f"secret='{TOKEN}' key=\"{TOKEN}\" x=1") == "secret=[REDACTED] key=[REDACTED] x=1"
     assert server.redact_secrets("/ws?browser_id=abc&tokens=1") == "/ws?browser_id=abc&tokens=1"
 
 
@@ -35,6 +36,37 @@ def test_log_records_are_redacted_for_any_logger(caplog):
     assert TOKEN not in caplog.text
     assert caplog.text.count("browser_token=[REDACTED]") == 4
     assert caplog.records[0].args[2] == "/ws?browser_token=[REDACTED]"
+
+
+def test_access_log_keeps_its_args_for_quoted_query_values(caplog):
+    caplog.set_level(logging.INFO)
+    logging.getLogger("uvicorn.access").info(
+        '%s - "%s %s HTTP/%s" %d', "1.2.3.4:5", "GET", '/x?token="&a=1', "1.1", 200,
+    )
+    assert caplog.records[0].args == ("1.2.3.4:5", "GET", '/x?token=[REDACTED]"&a=1', "1.1", 200)
+
+
+def test_format_templates_with_secret_names_still_format(caplog, capsys):
+    caplog.set_level(logging.INFO)
+    log = logging.getLogger("carrot.test")
+    log.info("key=%s", TOKEN)
+    log.info("password=%s user=%s", TOKEN, "bob")
+    log.info("%(name)s token=%(value)s", {"name": "ws", "value": TOKEN})
+    log.info("count=%d secret=%r", 3, TOKEN)
+    log.info("key=%s", "")
+    log.info("close code=%d", 1000)
+    assert TOKEN not in caplog.text
+    assert [r.getMessage() for r in caplog.records] == [
+        "key=[REDACTED]",
+        "password=[REDACTED] user=bob",
+        "ws token=[REDACTED]",
+        "count=3 secret=[REDACTED]",
+        "key=[REDACTED]",
+        "close code=1000",
+    ]
+    assert caplog.records[-1].msg == "close code=%d"
+    assert caplog.records[-1].args == (1000,)
+    assert capsys.readouterr().err == ""
 
 
 @pytest.fixture

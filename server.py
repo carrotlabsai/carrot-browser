@@ -73,7 +73,7 @@ SECRET_QUERY_PARAMS = (
     "token", "api_key", "apikey", "key", "secret", "password", "auth", "authorization",
 )
 _SECRET_PARAM_RE = re.compile(
-    r"(?<![\w.-])(" + "|".join(SECRET_QUERY_PARAMS) + r")=[^&\s\"'#]*",
+    r"(?<![\w.-])(" + "|".join(SECRET_QUERY_PARAMS) + r")=(?:\"[^\"]*\"|'[^']*'|[^&\s\"'#]*)",
     re.IGNORECASE,
 )
 
@@ -93,21 +93,39 @@ def _redact_arg(value: Any) -> Any:
     return value if redacted == text else redacted
 
 
+def _redact_args(args: Any) -> Any:
+    if isinstance(args, tuple):
+        return tuple(_redact_arg(a) for a in args)
+    if isinstance(args, dict):
+        return {k: _redact_arg(v) for k, v in args.items()}
+    return args
+
+
 # A record factory rather than a logger filter, so it covers every logger
 # (uvicorn.access, uvicorn.error, the app, libraries) whatever order uvicorn
-# configures logging in. Args are redacted in place because uvicorn's access
-# formatter unpacks record.args.
+# configures logging in. The %-template in record.msg is never rewritten, since
+# names like key= or token= in a template would break formatting. Redacting the
+# args is preferred because uvicorn's access formatter unpacks record.args.
 _base_record_factory = logging.getLogRecordFactory()
 
 
 def _redacting_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
     record = _base_record_factory(*args, **kwargs)
-    if isinstance(record.msg, str):
-        record.msg = redact_secrets(record.msg)
-    if isinstance(record.args, tuple):
-        record.args = tuple(_redact_arg(a) for a in record.args)
-    elif isinstance(record.args, dict):
-        record.args = {k: _redact_arg(v) for k, v in record.args.items()}
+    try:
+        message = record.getMessage()
+    except Exception:
+        return record
+    redacted = redact_secrets(message)
+    if redacted == message:
+        return record
+    record.args = _redact_args(record.args)
+    try:
+        partly = record.getMessage()
+        clean = redact_secrets(partly) == partly
+    except Exception:
+        clean = False
+    if not clean:
+        record.msg, record.args = redacted, None
     return record
 
 

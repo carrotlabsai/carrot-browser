@@ -1,5 +1,5 @@
-"""The hosted bridge image copies only server.py, so helpers that the standalone
-adapter in mcp-server/ also needs are duplicated. This keeps the copies in step."""
+"""The bridge image copies server.py but not mcp-server/, so helpers that the
+standalone adapter also needs are duplicated. This keeps the copies in step."""
 import ast
 from pathlib import Path
 
