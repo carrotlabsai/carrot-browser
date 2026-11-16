@@ -9,7 +9,7 @@ This project uses semantic versioning for the Chrome extension version in
 
 - No unreleased changes recorded yet.
 
-## 0.5.2 - 2026-11-15
+## 0.5.2 - 2026-11-16
 
 - `navigate`, `goBack`, `goForward`, `reloadTab`, and `createTab` now wait for
   the new page to finish loading before returning, so the next command runs
@@ -29,6 +29,11 @@ This project uses semantic versioning for the Chrome extension version in
   which fixes pasting into code editors. Chrome briefly shows its "started
   debugging this browser" bar while a key is pressed, as it already did for
   `clickAt` and tab screenshots.
+- When the debugger is unavailable or the target cannot take focus, `press`
+  falls back to synthetic events that now carry the parsed key, `code`,
+  modifier flags, and the legacy `keyCode`, `which`, and `charCode` values a
+  real key press has. `keypress` fires only for keys that type text, as in
+  Chrome.
 - `execute` works on pages whose Content Security Policy blocks eval, such as
   claude.ai, by retrying the top frame through the Chrome debugger. Errors say
   when that fallback is not possible.
@@ -38,6 +43,10 @@ This project uses semantic versioning for the Chrome extension version in
   accepts `maxWidth`, and `POST /cmd` extends its timeout for navigation
   commands with a long `timeoutMs`. The standalone MCP adapter in `mcp-server/`
   has the same tool changes.
+- Bridge: logs no longer contain the extension's `browser_token`. The bridge
+  replaces the values of `browser_token`, `session_token`, `token`, `key`,
+  `secret`, `password`, and similar query parameters with `[REDACTED]` in
+  access and application logs.
 - No permission or privacy changes. The extension and bridge work with older
   versions of each other. Load waiting, shortcuts, the eval fallback, and the
   select fix need extension 0.5.2; MCP image screenshots need the 0.5.2

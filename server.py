@@ -24,7 +24,9 @@ import asyncio
 import hashlib
 import html
 import json
+import logging
 import os
+import re
 import secrets
 import string
 import time
@@ -59,6 +61,57 @@ NAV_WAIT_MODES = ("load", "domcontentloaded", "none")
 NAV_DEFAULT_TIMEOUT_MS = 20000
 NAV_TIMEOUT_MARGIN_S = 10.0
 SERVICE_STARTED_AT = time.time()
+
+# ---------------------------------------------------------------------------
+# Log redaction
+# ---------------------------------------------------------------------------
+
+# The extension authenticates its WebSocket with ?browser_token=..., and uvicorn
+# logs every request path with its query string.
+SECRET_QUERY_PARAMS = (
+    "browser_token", "session_token", "access_token", "refresh_token", "id_token",
+    "token", "api_key", "apikey", "key", "secret", "password", "auth", "authorization",
+)
+_SECRET_PARAM_RE = re.compile(
+    r"(?<![\w.-])(" + "|".join(SECRET_QUERY_PARAMS) + r")=[^&\s\"'#]*",
+    re.IGNORECASE,
+)
+
+
+def redact_secrets(text: str) -> str:
+    return _SECRET_PARAM_RE.sub(r"\1=[REDACTED]", text)
+
+
+def _redact_arg(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if value is None or isinstance(value, (int, float, bytes)):
+        return value
+    # URL objects and similar format through str().
+    text = str(value)
+    redacted = redact_secrets(text)
+    return value if redacted == text else redacted
+
+
+# A record factory rather than a logger filter, so it covers every logger
+# (uvicorn.access, uvicorn.error, the app, libraries) whatever order uvicorn
+# configures logging in. Args are redacted in place because uvicorn's access
+# formatter unpacks record.args.
+_base_record_factory = logging.getLogRecordFactory()
+
+
+def _redacting_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+    record = _base_record_factory(*args, **kwargs)
+    if isinstance(record.msg, str):
+        record.msg = redact_secrets(record.msg)
+    if isinstance(record.args, tuple):
+        record.args = tuple(_redact_arg(a) for a in record.args)
+    elif isinstance(record.args, dict):
+        record.args = {k: _redact_arg(v) for k, v in record.args.items()}
+    return record
+
+
+logging.setLogRecordFactory(_redacting_record_factory)
 
 # ---------------------------------------------------------------------------
 # Data models

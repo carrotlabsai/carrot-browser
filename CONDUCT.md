@@ -119,6 +119,8 @@ Run basic validation:
 ```bash
 python3 -m json.tool manifest.json >/tmp/carrot-manifest.json
 python3 -m py_compile server.py
+node --test tests/*.test.mjs
+uv run --with-requirements requirements.txt --with pytest --with httpx pytest tests/
 ```
 
 Load the unpacked extension in Chrome:

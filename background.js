@@ -2307,34 +2307,51 @@ async function injectScroll(tabId, ref, selector, direction, amount) {
   return r?.result;
 }
 
-async function injectPress(tabId, combo, ref, selector) {
-  const event = {
-    key: combo.description.key,
-    code: combo.description.code,
-    keyCode: combo.description.keyCode,
+// Matches what Chrome sends for a real key: keypress only for keys that type
+// text (not Escape, Tab, arrows, or Control/Alt/Meta shortcuts), and its
+// keyCode, which, and charCode are the character code rather than the key code.
+function syntheticKeyEvents(combo) {
+  const d = combo.description;
+  const init = {
+    key: d.key,
+    code: d.code,
+    location: MODIFIER_KEYS[d.key] ? 1 : 0,
     shiftKey: combo.modifiers.includes("Shift"),
     ctrlKey: combo.modifiers.includes("Control"),
     altKey: combo.modifiers.includes("Alt"),
     metaKey: combo.modifiers.includes("Meta"),
   };
+  const events = [{ type: "keydown", init, keyCode: d.keyCode, charCode: 0 }];
+  if (d.text) {
+    const charCode = d.text.codePointAt(0);
+    events.push({ type: "keypress", init, keyCode: charCode, charCode });
+  }
+  events.push({ type: "keyup", init, keyCode: d.keyCode, charCode: 0 });
+  return events;
+}
+
+// Runs in the page through chrome.scripting, so it must stay self-contained.
+function dispatchSyntheticKeys(events, rf, sel) {
+  let target = document.activeElement || document;
+  if (rf && window.__carrotRefs && window.__carrotRefs[rf]) target = window.__carrotRefs[rf];
+  else if (sel) target = document.querySelector(sel) || document;
+
+  for (const ev of events) {
+    const e = new KeyboardEvent(ev.type, { ...ev.init, bubbles: true, cancelable: true });
+    // The KeyboardEvent constructor ignores keyCode, which, and charCode.
+    Object.defineProperty(e, "keyCode", { get: () => ev.keyCode });
+    Object.defineProperty(e, "which", { get: () => ev.keyCode });
+    Object.defineProperty(e, "charCode", { get: () => ev.charCode });
+    target.dispatchEvent(e);
+  }
+  return { pressed: events[0].init.key };
+}
+
+async function injectPress(tabId, combo, ref, selector) {
   const [r] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (ev, rf, sel) => {
-      let target = document.activeElement || document;
-      if (rf && window.__carrotRefs && window.__carrotRefs[rf]) target = window.__carrotRefs[rf];
-      else if (sel) target = document.querySelector(sel) || document;
-
-      const opts = { ...ev, bubbles: true, cancelable: true };
-      for (const type of ["keydown", "keypress", "keyup"]) {
-        const e = new KeyboardEvent(type, opts);
-        // The KeyboardEvent constructor ignores keyCode and which.
-        Object.defineProperty(e, "keyCode", { get: () => ev.keyCode });
-        Object.defineProperty(e, "which", { get: () => ev.keyCode });
-        target.dispatchEvent(e);
-      }
-      return { pressed: ev.key };
-    },
-    args: [event, ref ?? "", selector ?? ""],
+    func: dispatchSyntheticKeys,
+    args: [syntheticKeyEvents(combo), ref ?? "", selector ?? ""],
   });
   return r?.result;
 }
