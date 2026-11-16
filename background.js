@@ -2311,6 +2311,7 @@ async function injectPress(tabId, combo, ref, selector) {
   const event = {
     key: combo.description.key,
     code: combo.description.code,
+    keyCode: combo.description.keyCode,
     shiftKey: combo.modifiers.includes("Shift"),
     ctrlKey: combo.modifiers.includes("Control"),
     altKey: combo.modifiers.includes("Alt"),
@@ -2324,9 +2325,13 @@ async function injectPress(tabId, combo, ref, selector) {
       else if (sel) target = document.querySelector(sel) || document;
 
       const opts = { ...ev, bubbles: true, cancelable: true };
-      target.dispatchEvent(new KeyboardEvent("keydown", opts));
-      target.dispatchEvent(new KeyboardEvent("keypress", opts));
-      target.dispatchEvent(new KeyboardEvent("keyup", opts));
+      for (const type of ["keydown", "keypress", "keyup"]) {
+        const e = new KeyboardEvent(type, opts);
+        // The KeyboardEvent constructor ignores keyCode and which.
+        Object.defineProperty(e, "keyCode", { get: () => ev.keyCode });
+        Object.defineProperty(e, "which", { get: () => ev.keyCode });
+        target.dispatchEvent(e);
+      }
       return { pressed: ev.key };
     },
     args: [event, ref ?? "", selector ?? ""],
