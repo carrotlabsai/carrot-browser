@@ -23,9 +23,16 @@ import os
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ImageContent, TextContent
 
 BRIDGE = os.environ.get("CARROT_BRIDGE_URL", "http://127.0.0.1:7777").rstrip("/")
 SESSION_TOKEN = os.environ.get("CARROT_SESSION_TOKEN", "")
+NAV_WAIT_MODES = ("load", "domcontentloaded", "none")
+NAV_DEFAULT_TIMEOUT_MS = 20000
+NAV_WAIT_DOC = (
+    "Waits for the new page to load (wait_until=\"load\", default; \"domcontentloaded\"; or \"none\" "
+    "to return immediately) for up to timeout_ms, then returns the final url, title, and loaded/timedOut."
+)
 
 mcp = FastMCP(
     "carrot",
@@ -84,6 +91,55 @@ async def _bridge_post(path: str, body: dict) -> dict:
             timeout=35,
         )
         return resp.json()
+
+
+def _nav_kwargs(wait_until: str, timeout_ms: int, tab_id: int | None = None) -> dict:
+    if wait_until not in NAV_WAIT_MODES:
+        raise ValueError(f"wait_until must be one of: {', '.join(NAV_WAIT_MODES)}")
+    kwargs: dict = {"waitUntil": wait_until, "timeoutMs": timeout_ms}
+    if tab_id is not None:
+        kwargs["tabId"] = tab_id
+    return kwargs
+
+
+def _nav_timeout(timeout_ms: int) -> float:
+    return max(30.0, max(timeout_ms, 0) / 1000 + 10)
+
+
+def _screenshot_content(result) -> list[ImageContent | TextContent]:
+    """Turn the extension's screenshot result into MCP image content plus coordinate notes."""
+    if not isinstance(result, dict) or not str(result.get("dataUrl", "")).startswith("data:"):
+        return [TextContent(type="text", text=f"Screenshot failed: unexpected result {str(result)[:200]}")]
+    header, _, data = result["dataUrl"].partition(",")
+    mime_type = header[len("data:"):].split(";")[0] or "image/png"
+    lines = []
+    if result.get("tabId") is not None:
+        lines.append(f"Screenshot of tab {result['tabId']}.")
+    width, height = result.get("width"), result.get("height")
+    if width and height:
+        lines.append(f"Image size: {width}x{height} px.")
+    viewport = result.get("viewport")
+    scale = result.get("cssPixelsPerImagePixel")
+    if isinstance(viewport, dict) and viewport.get("width") and scale:
+        lines.append(
+            f"Viewport: {viewport['width']}x{viewport['height']} CSS px, "
+            f"devicePixelRatio {viewport.get('devicePixelRatio')}, "
+            f"scroll ({viewport.get('scrollX', 0)}, {viewport.get('scrollY', 0)})."
+        )
+        lines.append(
+            f"One image pixel is {round(scale, 4)} CSS px. For click_at, multiply image x and y by "
+            f"{round(scale, 4)} and pass coordinate_space=\"viewport\", or also add the scroll offset "
+            f"for the default page coordinates."
+        )
+    else:
+        lines.append(
+            "Viewport size is unavailable (restricted page or extension older than 0.5.2), "
+            "so the image may be at device resolution."
+        )
+    return [
+        ImageContent(type="image", data=data, mimeType=mime_type),
+        TextContent(type="text", text=" ".join(lines)),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +339,9 @@ async def form_input(
     frame_selector: str | None = None,
 ) -> str:
     """Set a form field value directly. Works with select, checkbox, radio,
-    input, textarea, and contenteditable elements.
+    input, textarea, and contenteditable elements. For a select, the returned
+    value is read again shortly after the change event, so a React-controlled
+    select reports the value it settled on.
     """
     kwargs: dict = {"value": value}
     if ref:
@@ -359,7 +417,10 @@ async def press_key(
     selector: str | None = None,
     tab_id: int | None = None,
 ) -> str:
-    """Send a keyboard key press (Enter, Tab, Escape, ArrowDown, etc.)."""
+    """Press a key or shortcut as trusted input: Enter, Tab, Escape, ArrowDown, a, Shift+Tab,
+    Meta+v, Control+a. "Mod+..." means Meta on macOS and Control elsewhere. On macOS,
+    Meta+a/c/x/v/z and Shift+Meta+z perform select all, copy, cut, paste, undo and redo.
+    With ref or selector, the element is focused first."""
     kwargs: dict = {"key": key}
     if ref:
         kwargs["ref"] = ref
@@ -375,33 +436,37 @@ async def press_key(
 # Navigation
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
-async def navigate(url: str, tab_id: int | None = None) -> str:
-    """Navigate the active tab (or a specific tab) to a URL."""
-    body: dict = {"url": url}
-    if tab_id is not None:
-        body["tabId"] = tab_id
-    result = await _bridge_post("/navigate", body)
+@mcp.tool(description=f"Navigate the active tab (or a specific tab) to a URL. {NAV_WAIT_DOC}")
+async def navigate(
+    url: str,
+    tab_id: int | None = None,
+    wait_until: str = "load",
+    timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS,
+) -> str:
+    kwargs = _nav_kwargs(wait_until, timeout_ms, tab_id)
+    result = await _bridge_cmd("navigate", timeout=_nav_timeout(timeout_ms), url=url, **kwargs)
     return str(result)
 
 
-@mcp.tool()
-async def go_back(tab_id: int | None = None) -> str:
-    """Go back in browser history."""
-    kwargs = {}
-    if tab_id is not None:
-        kwargs["tabId"] = tab_id
-    result = await _bridge_cmd("goBack", **kwargs)
+@mcp.tool(description=f"Go back in browser history. {NAV_WAIT_DOC}")
+async def go_back(
+    tab_id: int | None = None,
+    wait_until: str = "load",
+    timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS,
+) -> str:
+    kwargs = _nav_kwargs(wait_until, timeout_ms, tab_id)
+    result = await _bridge_cmd("goBack", timeout=_nav_timeout(timeout_ms), **kwargs)
     return str(result)
 
 
-@mcp.tool()
-async def go_forward(tab_id: int | None = None) -> str:
-    """Go forward in browser history."""
-    kwargs = {}
-    if tab_id is not None:
-        kwargs["tabId"] = tab_id
-    result = await _bridge_cmd("goForward", **kwargs)
+@mcp.tool(description=f"Go forward in browser history. {NAV_WAIT_DOC}")
+async def go_forward(
+    tab_id: int | None = None,
+    wait_until: str = "load",
+    timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS,
+) -> str:
+    kwargs = _nav_kwargs(wait_until, timeout_ms, tab_id)
+    result = await _bridge_cmd("goForward", timeout=_nav_timeout(timeout_ms), **kwargs)
     return str(result)
 
 
@@ -430,20 +495,21 @@ async def activate_tab(tab_id: int) -> str:
     return str(result)
 
 
-@mcp.tool()
+@mcp.tool(description=f"Create a new browser tab. {NAV_WAIT_DOC}")
 async def create_tab(
     url: str | None = None,
     active: bool = True,
     pinned: bool = False,
     window_id: int | None = None,
+    wait_until: str = "load",
+    timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS,
 ) -> str:
-    """Create a new browser tab."""
-    kwargs: dict = {"active": active, "pinned": pinned}
+    kwargs: dict = {"active": active, "pinned": pinned, **_nav_kwargs(wait_until, timeout_ms)}
     if url:
         kwargs["url"] = url
     if window_id is not None:
         kwargs["windowId"] = window_id
-    result = await _bridge_cmd("createTab", **kwargs)
+    result = await _bridge_cmd("createTab", timeout=_nav_timeout(timeout_ms), **kwargs)
     return str(result)
 
 
@@ -454,16 +520,15 @@ async def close_tab(tab_id: int) -> str:
     return str(result)
 
 
-@mcp.tool()
+@mcp.tool(description=f"Reload a tab. Optionally bypass cache. {NAV_WAIT_DOC}")
 async def reload_tab(
     tab_id: int | None = None,
     bypass_cache: bool = False,
+    wait_until: str = "load",
+    timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS,
 ) -> str:
-    """Reload a tab. Optionally bypass cache."""
-    kwargs: dict = {"bypassCache": bypass_cache}
-    if tab_id is not None:
-        kwargs["tabId"] = tab_id
-    result = await _bridge_cmd("reloadTab", **kwargs)
+    kwargs: dict = {"bypassCache": bypass_cache, **_nav_kwargs(wait_until, timeout_ms, tab_id)}
+    result = await _bridge_cmd("reloadTab", timeout=_nav_timeout(timeout_ms), **kwargs)
     return str(result)
 
 
@@ -637,17 +702,22 @@ async def screenshot(
     window_id: int | None = None,
     tab_id: int | None = None,
     format: str | None = None,
-) -> str:
-    """Capture a screenshot. Pass tab_id to target a specific tab."""
-    params = {}
+    max_width: int = 1280,
+):
+    """Capture a screenshot of the visible viewport and return it as an image. Pass tab_id
+    to target a specific tab. The image is downscaled to at most max_width px and never wider
+    than the CSS viewport (pass 0 for full device resolution). The text part gives the CSS
+    viewport size, devicePixelRatio, scroll offset, and the factor that maps image pixels to
+    click_at coordinates.
+    """
+    kwargs: dict = {"maxWidth": max_width}
     if tab_id is not None:
-        params["tabId"] = str(tab_id)
+        kwargs["tabId"] = tab_id
     if window_id is not None:
-        params["windowId"] = str(window_id)
+        kwargs["windowId"] = window_id
     if format:
-        params["format"] = format
-    result = await _bridge_get("/screenshot", params=params or None)
-    return str(result)
+        kwargs["format"] = format
+    return _screenshot_content(await _bridge_cmd("screenshot", **kwargs))
 
 
 @mcp.tool()
@@ -658,7 +728,10 @@ async def execute_js(
     frame_id: int | None = None,
     frame_selector: str | None = None,
 ) -> str:
-    """Execute JavaScript in the page. May fail on Trusted Types sites (YouTube, etc.).
+    """Execute JavaScript in the page and return the value of the last expression.
+    On pages whose Content Security Policy blocks eval, the top frame's MAIN world is
+    retried through the Chrome debugger (Runtime.evaluate), which also awaits promises.
+    Frame-targeted and ISOLATED-world scripts have no such fallback.
     Prefer read_page + click/type for standard interaction.
     """
     body: dict = {"script": script}

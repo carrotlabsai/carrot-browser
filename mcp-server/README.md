@@ -102,11 +102,14 @@ When connecting to an authenticated bridge instance:
 - `form_input` -- Set form field values (select, checkbox, radio, etc.)
 - `fill_content_editable` -- Fill rich text editors (Gmail, Slack, etc.)
 - `scroll` -- Scroll page or element
-- `press_key` -- Send keyboard key press
+- `press_key` -- Press a key or shortcut (`Enter`, `Shift+Tab`, `Meta+v`) as trusted input
 
 ### Navigation
-- `navigate` -- Go to a URL
-- `go_back` / `go_forward` -- Browser history
+- `navigate` -- Go to a URL and wait for the page to load
+- `go_back` / `go_forward` -- Browser history, waiting for the page to load
+
+Navigation tools, `create_tab`, and `reload_tab` accept `wait_until` (`load`
+by default, `domcontentloaded`, or `none`) and `timeout_ms` (default 20000).
 
 ### Tab Management
 - `list_tabs` / `focused_tab` -- Query tabs
@@ -121,7 +124,7 @@ When connecting to an authenticated bridge instance:
 - `read_network` -- Network request log
 
 ### Other
-- `screenshot` -- Capture visible tab, or pass `tab_id` for a specific tab
-- `execute_js` -- Run arbitrary JavaScript
+- `screenshot` -- Capture visible tab, or pass `tab_id` for a specific tab. Returns MCP image content (at most `max_width`, default 1280 px) and the CSS viewport size for mapping to `click_at`
+- `execute_js` -- Run arbitrary JavaScript (retried through the debugger when page CSP blocks eval)
 - `search_history` / `search_bookmarks` / `bookmark_tree`
 - `status` -- Check bridge connection

@@ -428,8 +428,35 @@ async function getActiveTabIdInWindow(windowId) {
   return tab.id;
 }
 
-async function captureTabScreenshotWithDebugger(tabId, opts = {}) {
+// Chrome allows one attachment per extension and tab, so concurrent commands
+// on the same tab take turns.
+const debuggerQueues = new Map();
+
+async function withDebugger(tabId, fn) {
+  const previous = debuggerQueues.get(tabId) || Promise.resolve();
+  let release;
+  const done = new Promise((resolve) => { release = resolve; });
+  const turn = previous.then(() => done);
+  debuggerQueues.set(tabId, turn);
+  await previous;
   const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    return await fn(target);
+  } finally {
+    if (attached) {
+      try {
+        await chrome.debugger.detach(target);
+      } catch {}
+    }
+    release();
+    if (debuggerQueues.get(tabId) === turn) debuggerQueues.delete(tabId);
+  }
+}
+
+async function captureTabScreenshotWithDebugger(tabId, opts = {}) {
   const format = opts.format || "png";
   const params = {
     format,
@@ -439,25 +466,116 @@ async function captureTabScreenshotWithDebugger(tabId, opts = {}) {
     params.quality = opts.quality;
   }
 
-  let attached = false;
-  try {
-    await chrome.debugger.attach(target, "1.3");
-    attached = true;
+  return withDebugger(tabId, async (target) => {
     await chrome.debugger.sendCommand(target, "Page.enable");
     const result = await chrome.debugger.sendCommand(target, "Page.captureScreenshot", params);
     if (!result?.data) throw new Error("Debugger screenshot returned no data");
-    return `data:image/${format};base64,${result.data}`;
-  } finally {
-    if (attached) {
-      try {
-        await chrome.debugger.detach(target);
-      } catch {}
-    }
+    // The debugging infobar resizes the page while attached, so measure in
+    // the same session as the capture.
+    let viewport = null;
+    try {
+      const metrics = await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
+        expression: `(${viewportMetrics})()`,
+        returnByValue: true,
+      });
+      viewport = metrics?.result?.value || null;
+    } catch {}
+    return { dataUrl: `data:image/${format};base64,${result.data}`, viewport };
+  });
+}
+
+function viewportMetrics() {
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    devicePixelRatio: window.devicePixelRatio,
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
+  };
+}
+
+async function readViewportMetrics(tabId) {
+  try {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: viewportMetrics,
+    });
+    return r?.result || null;
+  } catch {
+    return null;
   }
 }
 
+function base64FromBytes(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+// The image is never wider than the CSS viewport, so with the default
+// maxWidth one image pixel is one CSS pixel unless the viewport is wider.
+async function captureScreenshot(cmd) {
+  const format = cmd.format === "jpeg" ? "jpeg" : "png";
+  const quality = cmd.quality || 90;
+  const tabId = cmd.tabId || (cmd.windowId ? await getActiveTabIdInWindow(cmd.windowId) : await getActiveTabId());
+  let rawDataUrl;
+  let viewport;
+  if (cmd.tabId) {
+    ({ dataUrl: rawDataUrl, viewport } = await captureTabScreenshotWithDebugger(cmd.tabId, { format, quality }));
+  } else {
+    rawDataUrl = await chrome.tabs.captureVisibleTab(cmd.windowId || null, { format, quality });
+    viewport = await readViewportMetrics(tabId);
+  }
+
+  const blob = await (await fetch(rawDataUrl)).blob();
+  const bitmap = await createImageBitmap(blob);
+  const rawWidth = bitmap.width;
+  const rawHeight = bitmap.height;
+  bitmap.close();
+
+  const maxWidth = Number(cmd.maxWidth || 0);
+  let targetWidth = rawWidth;
+  if (maxWidth > 0) {
+    targetWidth = Math.min(rawWidth, Math.round(maxWidth));
+    if (viewport?.width) targetWidth = Math.min(targetWidth, viewport.width);
+  }
+
+  let dataUrl = rawDataUrl;
+  let width = rawWidth;
+  let height = rawHeight;
+  if (targetWidth < rawWidth) {
+    width = targetWidth;
+    height = Math.max(1, Math.round((rawHeight * targetWidth) / rawWidth));
+    const resized = await createImageBitmap(blob, {
+      resizeWidth: width,
+      resizeHeight: height,
+      resizeQuality: "high",
+    });
+    const canvas = new OffscreenCanvas(width, height);
+    canvas.getContext("2d", { alpha: false }).drawImage(resized, 0, 0);
+    resized.close();
+    const out = await canvas.convertToBlob({
+      type: `image/${format}`,
+      ...(format === "jpeg" ? { quality: quality / 100 } : {}),
+    });
+    dataUrl = `data:image/${format};base64,${base64FromBytes(new Uint8Array(await out.arrayBuffer()))}`;
+  }
+
+  return {
+    dataUrl,
+    format,
+    tabId,
+    width,
+    height,
+    viewport,
+    cssPixelsPerImagePixel: viewport?.width ? viewport.width / width : null,
+  };
+}
+
 async function clickTabAt(tabId, x, y, opts = {}) {
-  const target = { tabId };
   const button = opts.button || "left";
   const coordinateSpace = opts.coordinateSpace || "page";
   let point = { clientX: Number(x), clientY: Number(y), scrollX: 0, scrollY: 0 };
@@ -469,10 +587,7 @@ async function clickTabAt(tabId, x, y, opts = {}) {
     point = await resolvePagePointToViewport(tabId, point.clientX, point.clientY, opts.scrollIntoView !== false);
   }
 
-  let attached = false;
-  try {
-    await chrome.debugger.attach(target, "1.3");
-    attached = true;
+  return withDebugger(tabId, async (target) => {
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
       type: "mouseMoved",
       x: point.clientX,
@@ -506,13 +621,7 @@ async function clickTabAt(tabId, x, y, opts = {}) {
       scrollX: point.scrollX,
       scrollY: point.scrollY,
     };
-  } finally {
-    if (attached) {
-      try {
-        await chrome.debugger.detach(target);
-      } catch {}
-    }
-  }
+  });
 }
 
 async function resolvePagePointToViewport(tabId, x, y, scrollIntoView) {
@@ -545,6 +654,414 @@ async function resolvePagePointToViewport(tabId, x, y, scrollIntoView) {
   const point = r?.result;
   if (!point) throw new Error("Unable to resolve clickAt page coordinates");
   return point;
+}
+
+// ---------------------------------------------------------------------------
+// Navigation waiting
+// ---------------------------------------------------------------------------
+
+const NAV_WAIT_MODES = new Set(["load", "domcontentloaded", "none"]);
+const NAV_DEFAULT_TIMEOUT_MS = 20000;
+const NAV_ABORT_GRACE_MS = 1000;
+
+function navigationWaitOptions(cmd) {
+  const waitUntil = String(cmd.waitUntil || "load").toLowerCase();
+  if (!NAV_WAIT_MODES.has(waitUntil)) {
+    throw new Error("waitUntil must be one of: load, domcontentloaded, none");
+  }
+  const timeoutMs = Number(cmd.timeoutMs ?? NAV_DEFAULT_TIMEOUT_MS);
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("timeoutMs must be a non-negative number");
+  return { waitUntil, timeoutMs };
+}
+
+// Listeners must exist before the navigation starts so no event is missed.
+// With tabId null (createTab), events are buffered until setTabId is called.
+function watchNavigation(tabId, waitUntil) {
+  let targetTabId = tabId;
+  const buffered = [];
+  let started = false;
+  let lastUrl = "";
+  let settled = false;
+  let abortTimer = null;
+  let timeoutTimer = null;
+  let resolveOutcome;
+  const outcome = new Promise((resolve) => { resolveOutcome = resolve; });
+
+  const finish = (result) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(abortTimer);
+    clearTimeout(timeoutTimer);
+    for (const [event, listener] of listeners) event.removeListener(listener);
+    resolveOutcome(result);
+  };
+
+  const handle = (kind, details) => {
+    if (details?.url) lastUrl = details.url;
+    switch (kind) {
+      case "committed":
+        started = true;
+        clearTimeout(abortTimer);
+        break;
+      case "domcontentloaded":
+        if (started && waitUntil === "domcontentloaded") finish({ event: "domcontentloaded" });
+        break;
+      case "completed":
+        if (started) finish({ event: "load" });
+        break;
+      case "sameDocument":
+        if (!started) finish({ event: "same-document" });
+        break;
+      case "error":
+        if (details.error === "net::ERR_ABORTED") {
+          // Superseded navigations recover with a new commit; downloads and
+          // 204 responses leave the old document in place.
+          clearTimeout(abortTimer);
+          abortTimer = setTimeout(() => finish({ event: "error", error: details.error }), NAV_ABORT_GRACE_MS);
+        } else {
+          finish({ event: "error", error: details.error });
+        }
+        break;
+      case "status":
+        if (details.status === "loading") {
+          started = true;
+          clearTimeout(abortTimer);
+        } else if (details.status === "complete" && started) {
+          finish({ event: "load" });
+        }
+        break;
+      case "replaced":
+        targetTabId = details.addedTabId;
+        finish({ event: "load", replacedTabId: details.removedTabId });
+        break;
+      case "removed":
+        finish({ event: "closed" });
+        break;
+    }
+  };
+
+  const route = (id, kind, details) => {
+    if (settled) return;
+    if (targetTabId === null) {
+      buffered.push([id, kind, details]);
+    } else if (id === targetTabId) {
+      handle(kind, details);
+    }
+  };
+
+  const topFrame = (details) => details.frameId === 0 && details.documentLifecycle !== "prerender";
+  const listeners = [
+    [chrome.webNavigation.onCommitted, (d) => topFrame(d) && route(d.tabId, "committed", d)],
+    [chrome.webNavigation.onDOMContentLoaded, (d) => topFrame(d) && route(d.tabId, "domcontentloaded", d)],
+    [chrome.webNavigation.onCompleted, (d) => topFrame(d) && route(d.tabId, "completed", d)],
+    [chrome.webNavigation.onErrorOccurred, (d) => topFrame(d) && route(d.tabId, "error", d)],
+    [chrome.webNavigation.onReferenceFragmentUpdated, (d) => topFrame(d) && route(d.tabId, "sameDocument", d)],
+    [chrome.webNavigation.onHistoryStateUpdated, (d) => topFrame(d) && route(d.tabId, "sameDocument", d)],
+    [chrome.tabs.onUpdated, (id, changeInfo) => changeInfo.status && route(id, "status", changeInfo)],
+    [chrome.tabs.onReplaced, (addedTabId, removedTabId) => route(removedTabId, "replaced", { addedTabId, removedTabId })],
+    [chrome.tabs.onRemoved, (id) => route(id, "removed", {})],
+  ];
+  for (const [event, listener] of listeners) event.addListener(listener);
+
+  return {
+    get tabId() { return targetTabId; },
+    get lastUrl() { return lastUrl; },
+    setTabId(id) {
+      targetTabId = id;
+      for (const [eventTabId, kind, details] of buffered.splice(0)) {
+        if (eventTabId === id) handle(kind, details);
+      }
+    },
+    wait(timeoutMs) {
+      if (!settled) timeoutTimer = setTimeout(() => finish({ event: "timeout" }), timeoutMs);
+      return outcome;
+    },
+    cancel() { finish({ event: "cancelled" }); },
+  };
+}
+
+// Runs `start` (which triggers the navigation) and waits for the new document.
+// `start` returns the tab when the tab id is not known in advance.
+async function navigateAndWait(tabId, cmd, start) {
+  const { waitUntil, timeoutMs } = navigationWaitOptions(cmd);
+  if (waitUntil === "none") {
+    const started = await start();
+    const id = tabId ?? started?.id;
+    const tab = await chrome.tabs.get(id).catch(() => started || null);
+    return navigationResult(id, tab, { event: "none" }, waitUntil, 0);
+  }
+
+  const startedAt = Date.now();
+  const watcher = watchNavigation(tabId, waitUntil);
+  try {
+    const started = await start();
+    if (tabId === null) watcher.setTabId(started.id);
+  } catch (e) {
+    watcher.cancel();
+    throw e;
+  }
+  const outcome = await watcher.wait(timeoutMs);
+
+  // webNavigation can run slightly ahead of the tab state.
+  let tab = await chrome.tabs.get(watcher.tabId).catch(() => null);
+  if (tab && waitUntil === "load" && (outcome.event === "load" || outcome.event === "same-document")) {
+    const settleBy = Math.min(startedAt + timeoutMs, Date.now() + 2000);
+    while (
+      tab &&
+      (tab.status !== "complete" || (watcher.lastUrl && tab.url !== watcher.lastUrl)) &&
+      Date.now() < settleBy
+    ) {
+      await new Promise((r) => setTimeout(r, 100));
+      tab = await chrome.tabs.get(watcher.tabId).catch(() => null);
+    }
+  }
+  return navigationResult(watcher.tabId, tab, outcome, waitUntil, Date.now() - startedAt);
+}
+
+function navigationResult(tabId, tab, outcome, waitUntil, waitedMs) {
+  const result = {
+    tabId: tab?.id ?? tabId,
+    url: tab?.url || tab?.pendingUrl || "",
+    title: tab?.title || "",
+    status: tab?.status || "unknown",
+    waitUntil,
+    loaded: ["load", "domcontentloaded", "same-document"].includes(outcome.event),
+    waitedMs,
+  };
+  if (tab?.windowId !== undefined) result.windowId = tab.windowId;
+  if (outcome.event === "timeout") result.timedOut = true;
+  if (outcome.event === "closed") result.closed = true;
+  if (outcome.error) result.navigationError = outcome.error;
+  if (outcome.replacedTabId !== undefined) result.replacedTabId = outcome.replacedTabId;
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard input through the debugger
+// ---------------------------------------------------------------------------
+
+const MODIFIER_ORDER = ["Shift", "Control", "Alt", "Meta"];
+const MODIFIER_BITS = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
+const MODIFIER_ALIASES = {
+  shift: "Shift",
+  control: "Control", ctrl: "Control",
+  alt: "Alt", option: "Alt", opt: "Alt",
+  meta: "Meta", cmd: "Meta", command: "Meta", super: "Meta", win: "Meta",
+};
+const MODIFIER_KEYS = {
+  Shift: { code: "ShiftLeft", keyCode: 16 },
+  Control: { code: "ControlLeft", keyCode: 17 },
+  Alt: { code: "AltLeft", keyCode: 18 },
+  Meta: { code: "MetaLeft", keyCode: 91 },
+};
+const NAMED_KEYS = {
+  Enter: { code: "Enter", keyCode: 13, text: "\r" },
+  Tab: { code: "Tab", keyCode: 9 },
+  Escape: { code: "Escape", keyCode: 27 },
+  Backspace: { code: "Backspace", keyCode: 8 },
+  Delete: { code: "Delete", keyCode: 46 },
+  Insert: { code: "Insert", keyCode: 45 },
+  Home: { code: "Home", keyCode: 36 },
+  End: { code: "End", keyCode: 35 },
+  PageUp: { code: "PageUp", keyCode: 33 },
+  PageDown: { code: "PageDown", keyCode: 34 },
+  ArrowLeft: { code: "ArrowLeft", keyCode: 37 },
+  ArrowUp: { code: "ArrowUp", keyCode: 38 },
+  ArrowRight: { code: "ArrowRight", keyCode: 39 },
+  ArrowDown: { code: "ArrowDown", keyCode: 40 },
+  " ": { code: "Space", keyCode: 32, text: " " },
+  ...MODIFIER_KEYS,
+};
+for (let i = 1; i <= 12; i++) NAMED_KEYS[`F${i}`] = { code: `F${i}`, keyCode: 111 + i };
+const KEY_ALIASES = {
+  esc: "Escape", return: "Enter", space: " ", spacebar: " ", del: "Delete",
+  up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight",
+  pgup: "PageUp", pgdn: "PageDown",
+};
+const NAMED_KEYS_LOWER = Object.fromEntries(Object.keys(NAMED_KEYS).map((k) => [k.toLowerCase(), k]));
+const PUNCTUATION_KEYS = {
+  "-": ["Minus", 189], "=": ["Equal", 187], "[": ["BracketLeft", 219], "]": ["BracketRight", 221],
+  "\\": ["Backslash", 220], ";": ["Semicolon", 186], "'": ["Quote", 222], ",": ["Comma", 188],
+  ".": ["Period", 190], "/": ["Slash", 191], "`": ["Backquote", 192],
+  "_": ["Minus", 189], "+": ["Equal", 187], "{": ["BracketLeft", 219], "}": ["BracketRight", 221],
+  "|": ["Backslash", 220], ":": ["Semicolon", 186], "\"": ["Quote", 222], "<": ["Comma", 188],
+  ">": ["Period", 190], "?": ["Slash", 191], "~": ["Backquote", 192],
+  "!": ["Digit1", 49], "@": ["Digit2", 50], "#": ["Digit3", 51], "$": ["Digit4", 52], "%": ["Digit5", 53],
+  "^": ["Digit6", 54], "&": ["Digit7", 55], "*": ["Digit8", 56], "(": ["Digit9", 57], ")": ["Digit0", 48],
+};
+
+// On macOS Chrome routes these shortcuts through the app menu instead of the
+// page, so CDP key events only perform them when the command is named.
+const MAC_EDITING_COMMANDS = {
+  "Meta+KeyA": ["selectAll"],
+  "Meta+KeyC": ["copy"],
+  "Meta+KeyX": ["cut"],
+  "Meta+KeyV": ["paste"],
+  "Shift+Alt+Meta+KeyV": ["pasteAndMatchStyle"],
+  "Meta+KeyZ": ["undo"],
+  "Shift+Meta+KeyZ": ["redo"],
+};
+
+let platformOsPromise = null;
+function getPlatformOs() {
+  if (!platformOsPromise) {
+    platformOsPromise = chrome.runtime.getPlatformInfo().then((info) => info.os).catch(() => "");
+  }
+  return platformOsPromise;
+}
+
+function describeKey(name) {
+  const named = NAMED_KEYS_LOWER[name.toLowerCase()] || KEY_ALIASES[name.toLowerCase()];
+  if (named) return { key: named, ...NAMED_KEYS[named] };
+  const codeMatch = /^(?:Key([A-Za-z])|Digit([0-9]))$/.exec(name);
+  if (codeMatch) name = (codeMatch[1] || codeMatch[2]).toLowerCase();
+  if ([...name].length !== 1) throw new Error(`Unknown key: ${name}`);
+  if (/^[a-z]$/i.test(name)) {
+    const upper = name.toUpperCase();
+    return { key: name, code: `Key${upper}`, keyCode: upper.charCodeAt(0), text: name };
+  }
+  if (/^[0-9]$/.test(name)) {
+    return { key: name, code: `Digit${name}`, keyCode: 48 + Number(name), text: name };
+  }
+  const punct = PUNCTUATION_KEYS[name];
+  if (punct) return { key: name, code: punct[0], keyCode: punct[1], text: name };
+  return { key: name, code: "", keyCode: 0, text: name };
+}
+
+// Accepts "Enter", "a", "Meta+v", "Control+Shift+ArrowLeft", "Shift++".
+// "Mod" and "CmdOrCtrl" mean Meta on macOS and Control elsewhere.
+function parseKeyCombo(spec, os) {
+  const raw = String(spec ?? "");
+  if (!raw) throw new Error("press requires key");
+  let parts = raw.split("+");
+  if (raw.endsWith("+")) parts = [...parts.filter(Boolean), "+"];
+  if (parts.some((p) => p === "")) throw new Error(`Invalid key combination: ${raw}`);
+  const keyName = parts.pop();
+  const modifiers = new Set();
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    const mod = lower === "mod" || lower === "cmdorctrl" || lower === "commandorcontrol"
+      ? (os === "mac" ? "Meta" : "Control")
+      : MODIFIER_ALIASES[lower];
+    if (!mod) throw new Error(`Unknown modifier: ${part}`);
+    modifiers.add(mod);
+  }
+  const description = describeKey(keyName);
+  if (/^[a-z]$/i.test(description.key) && modifiers.size) {
+    description.key = modifiers.has("Shift") ? description.key.toUpperCase() : description.key.toLowerCase();
+    description.text = description.key;
+  }
+  const ordered = MODIFIER_ORDER.filter((m) => modifiers.has(m) && m !== description.key);
+  const bits = ordered.reduce((acc, m) => acc | MODIFIER_BITS[m], 0);
+  if (bits & ~MODIFIER_BITS.Shift) description.text = "";
+  const shortcut = [...ordered, description.code || description.key].join("+");
+  const commands = os === "mac" ? MAC_EDITING_COMMANDS[shortcut] || [] : [];
+  return { modifiers: ordered, bits, description, commands, shortcut };
+}
+
+async function dispatchKeyComboWithDebugger(tabId, combo) {
+  return withDebugger(tabId, async (target) => {
+    const send = (params) => chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", params);
+    let bits = 0;
+    for (const mod of combo.modifiers) {
+      bits |= MODIFIER_BITS[mod];
+      const info = MODIFIER_KEYS[mod];
+      await send({
+        type: "rawKeyDown", modifiers: bits, key: mod, code: info.code,
+        windowsVirtualKeyCode: info.keyCode, nativeVirtualKeyCode: info.keyCode, location: 1,
+      });
+    }
+    const d = combo.description;
+    const keyParams = {
+      modifiers: bits, key: d.key, code: d.code,
+      windowsVirtualKeyCode: d.keyCode, nativeVirtualKeyCode: d.keyCode,
+      location: MODIFIER_KEYS[d.key] ? 1 : 0,
+    };
+    await send({
+      ...keyParams,
+      type: d.text ? "keyDown" : "rawKeyDown",
+      ...(d.text ? { text: d.text, unmodifiedText: d.text } : {}),
+      ...(combo.commands.length ? { commands: combo.commands } : {}),
+    });
+    await send({ ...keyParams, type: "keyUp" });
+    for (const mod of [...combo.modifiers].reverse()) {
+      bits &= ~MODIFIER_BITS[mod];
+      const info = MODIFIER_KEYS[mod];
+      await send({
+        type: "keyUp", modifiers: bits, key: mod, code: info.code,
+        windowsVirtualKeyCode: info.keyCode, nativeVirtualKeyCode: info.keyCode, location: 1,
+      });
+    }
+  });
+}
+
+async function focusPressTarget(tabId, ref, selector) {
+  const [r] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (rf, sel) => {
+      let el = null;
+      if (rf && window.__carrotRefs && window.__carrotRefs[rf]) el = window.__carrotRefs[rf];
+      else if (rf) el = document.querySelector('[data-carrot-ref="' + rf + '"]');
+      else if (sel) el = document.querySelector(sel);
+      if (!el) return { found: false };
+      el.scrollIntoView({ block: "center", behavior: "instant" });
+      el.focus();
+      const active = document.activeElement;
+      return { found: true, focused: !!active && (active === el || el.contains(active)) };
+    },
+    args: [ref ?? "", selector ?? ""],
+  });
+  return r?.result || { found: false };
+}
+
+async function pressKey(tabId, key, ref, selector) {
+  const combo = parseKeyCombo(key, await getPlatformOs());
+  if (ref || selector) {
+    const focus = await focusPressTarget(tabId, ref, selector);
+    if (!focus.found) throw new Error("press target element not found");
+    // Trusted key events go to the focused element, so a target that cannot
+    // take focus only receives the old synthetic events.
+    if (!focus.focused) {
+      return { ...(await injectPress(tabId, combo, ref, selector)), pressed: key, method: "synthetic", reason: "target cannot take focus" };
+    }
+  }
+  try {
+    await dispatchKeyComboWithDebugger(tabId, combo);
+  } catch (e) {
+    const fallback = await injectPress(tabId, combo, ref, selector);
+    return { ...fallback, pressed: key, method: "synthetic", reason: `debugger unavailable: ${e?.message || e}` };
+  }
+  const result = { pressed: key, method: "debugger" };
+  if (combo.commands.length) result.commands = combo.commands;
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// JavaScript evaluation through the debugger (CSP fallback)
+// ---------------------------------------------------------------------------
+
+function isEvalBlockedError(res) {
+  const text = `${res?.errorName || ""} ${res?.error || ""}`;
+  return /EvalError|unsafe-eval|Content Security Policy|TrustedScript/i.test(text);
+}
+
+// Runtime.evaluate runs like the DevTools console, which page CSP does not block.
+async function evaluateWithDebugger(tabId, code) {
+  return withDebugger(tabId, async (target) => {
+    const res = await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
+      expression: code,
+      returnByValue: true,
+      awaitPromise: true,
+      userGesture: true,
+    });
+    if (res?.exceptionDetails) {
+      const details = res.exceptionDetails;
+      const error = new Error(details.exception?.description || details.text || "Evaluation failed");
+      error.thrownByScript = true;
+      throw error;
+    }
+    return res?.result?.value;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -746,8 +1263,8 @@ async function handleCommand(cmd) {
 
       case "navigate": {
         const tabId = await getTab();
-        await chrome.tabs.update(tabId, { url: cmd.url });
-        result = { tabId, url: cmd.url };
+        result = await navigateAndWait(tabId, cmd, () => chrome.tabs.update(tabId, { url: cmd.url }));
+        result.requestedUrl = cmd.url;
         break;
       }
 
@@ -775,8 +1292,10 @@ async function handleCommand(cmd) {
 
       case "reloadTab": {
         const tabId = await getTab();
-        await chrome.tabs.reload(tabId, { bypassCache: !!cmd.bypassCache });
-        result = { reloaded: true, tabId };
+        result = {
+          reloaded: true,
+          ...(await navigateAndWait(tabId, cmd, () => chrome.tabs.reload(tabId, { bypassCache: !!cmd.bypassCache }))),
+        };
         break;
       }
 
@@ -826,8 +1345,13 @@ async function handleCommand(cmd) {
         if (cmd.pinned) opts.pinned = true;
         if (cmd.index !== undefined) opts.index = cmd.index;
         if (cmd.windowId) opts.windowId = cmd.windowId;
-        const tab = await chrome.tabs.create(opts);
-        result = { tabId: tab.id, url: tab.url, windowId: tab.windowId, index: tab.index };
+        let index;
+        result = await navigateAndWait(null, cmd, async () => {
+          const tab = await chrome.tabs.create(opts);
+          index = tab.index;
+          return tab;
+        });
+        result.index = index;
         break;
       }
 
@@ -919,15 +1443,9 @@ async function handleCommand(cmd) {
 
       // ===================== Screenshots =====================
 
-      case "screenshot": {
-        const format = cmd.format || "png";
-        const quality = cmd.quality || 90;
-        const dataUrl = cmd.tabId
-          ? await captureTabScreenshotWithDebugger(cmd.tabId, { format, quality })
-          : await chrome.tabs.captureVisibleTab(cmd.windowId || null, { format, quality });
-        result = { dataUrl, format, tabId: cmd.tabId || null };
+      case "screenshot":
+        result = await captureScreenshot(cmd);
         break;
-      }
 
       case "resolveFrame": {
         const tabId = await getTab();
@@ -1062,7 +1580,9 @@ async function handleCommand(cmd) {
 
       case "formInput": {
         const tabId = await getTab();
-        result = await injectAction(tabId, "formInput", actionInjectionOptions(cmd, { value: cmd.value }));
+        const opts = actionInjectionOptions(cmd, { value: cmd.value });
+        result = await injectAction(tabId, "formInput", opts);
+        if (result?.set && result.type === "select") result = await settleSelectValue(tabId, opts, result);
         break;
       }
 
@@ -1074,7 +1594,7 @@ async function handleCommand(cmd) {
 
       case "press": {
         const tabId = await getTab();
-        result = await injectPress(tabId, cmd.key, cmd.ref, cmd.selector);
+        result = await pressKey(tabId, cmd.key, cmd.ref, cmd.selector);
         break;
       }
 
@@ -1091,15 +1611,13 @@ async function handleCommand(cmd) {
 
       case "goBack": {
         const tabId = await getTab();
-        await chrome.tabs.goBack(tabId);
-        result = { navigated: "back", tabId };
+        result = { navigated: "back", ...(await navigateAndWait(tabId, cmd, () => chrome.tabs.goBack(tabId))) };
         break;
       }
 
       case "goForward": {
         const tabId = await getTab();
-        await chrome.tabs.goForward(tabId);
-        result = { navigated: "forward", tabId };
+        result = { navigated: "forward", ...(await navigateAndWait(tabId, cmd, () => chrome.tabs.goForward(tabId))) };
         break;
       }
 
@@ -1687,6 +2205,7 @@ async function injectAction(tabId, action, opts) {
         const tag = el.tagName;
         if (tag === "SELECT") {
           el.value = value;
+          el.dispatchEvent(new Event("input", { bubbles: true }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
           return { set: true, type: "select", value: el.value };
         }
@@ -1736,6 +2255,35 @@ async function injectAction(tabId, action, opts) {
   );
 }
 
+const SELECT_SETTLE_MS = 150;
+
+// React restores a controlled select to its old value during the change event
+// and applies the new one on the next render, so read the value again later.
+async function settleSelectValue(tabId, opts, immediate) {
+  await new Promise((r) => setTimeout(r, SELECT_SETTLE_MS));
+  let settled;
+  try {
+    const target = await buildInjectionTarget(tabId, opts);
+    const results = await chrome.scripting.executeScript({
+      target,
+      func: (ref, selector, index) => {
+        let el = null;
+        if (ref && window.__carrotRefs && window.__carrotRefs[ref]) el = window.__carrotRefs[ref];
+        else if (ref) el = document.querySelector('[data-carrot-ref="' + ref + '"]');
+        else if (selector) el = document.querySelectorAll(selector)[index || 0] || null;
+        if (!el || !el.isConnected || el.tagName !== "SELECT") return null;
+        return { value: el.value, text: el.selectedOptions?.[0]?.textContent?.trim() || "" };
+      },
+      args: [opts.ref ?? "", opts.selector ?? "", opts.index || 0],
+    });
+    settled = unwrapInjectionResults(results, (r) => !!r);
+  } catch {}
+  if (!settled) {
+    return { ...immediate, settled: false, note: "The select was replaced or the page changed after the change event; value is the one read right after dispatch." };
+  }
+  return { ...immediate, value: settled.value, selectedText: settled.text, settled: true };
+}
+
 async function injectScroll(tabId, ref, selector, direction, amount) {
   const [r] = await chrome.scripting.executeScript({
     target: { tabId },
@@ -1759,25 +2307,51 @@ async function injectScroll(tabId, ref, selector, direction, amount) {
   return r?.result;
 }
 
-async function injectPress(tabId, key, ref, selector) {
+// Matches what Chrome sends for a real key: keypress only for keys that type
+// text (not Escape, Tab, arrows, or Control/Alt/Meta shortcuts), and its
+// keyCode, which, and charCode are the character code rather than the key code.
+function syntheticKeyEvents(combo) {
+  const d = combo.description;
+  const init = {
+    key: d.key,
+    code: d.code,
+    location: MODIFIER_KEYS[d.key] ? 1 : 0,
+    shiftKey: combo.modifiers.includes("Shift"),
+    ctrlKey: combo.modifiers.includes("Control"),
+    altKey: combo.modifiers.includes("Alt"),
+    metaKey: combo.modifiers.includes("Meta"),
+  };
+  const events = [{ type: "keydown", init, keyCode: d.keyCode, charCode: 0 }];
+  if (d.text) {
+    const charCode = d.text.codePointAt(0);
+    events.push({ type: "keypress", init, keyCode: charCode, charCode });
+  }
+  events.push({ type: "keyup", init, keyCode: d.keyCode, charCode: 0 });
+  return events;
+}
+
+// Runs in the page through chrome.scripting, so it must stay self-contained.
+function dispatchSyntheticKeys(events, rf, sel) {
+  let target = document.activeElement || document;
+  if (rf && window.__carrotRefs && window.__carrotRefs[rf]) target = window.__carrotRefs[rf];
+  else if (sel) target = document.querySelector(sel) || document;
+
+  for (const ev of events) {
+    const e = new KeyboardEvent(ev.type, { ...ev.init, bubbles: true, cancelable: true });
+    // The KeyboardEvent constructor ignores keyCode, which, and charCode.
+    Object.defineProperty(e, "keyCode", { get: () => ev.keyCode });
+    Object.defineProperty(e, "which", { get: () => ev.keyCode });
+    Object.defineProperty(e, "charCode", { get: () => ev.charCode });
+    target.dispatchEvent(e);
+  }
+  return { pressed: events[0].init.key };
+}
+
+async function injectPress(tabId, combo, ref, selector) {
   const [r] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (k, rf, sel) => {
-      let target = document.activeElement || document;
-      if (rf && window.__carrotRefs && window.__carrotRefs[rf]) target = window.__carrotRefs[rf];
-      else if (sel) target = document.querySelector(sel) || document;
-
-      const opts = { key: k, bubbles: true, cancelable: true };
-      if (k === "Enter") opts.keyCode = 13;
-      if (k === "Escape") opts.keyCode = 27;
-      if (k === "Tab") opts.keyCode = 9;
-
-      target.dispatchEvent(new KeyboardEvent("keydown", opts));
-      target.dispatchEvent(new KeyboardEvent("keypress", opts));
-      target.dispatchEvent(new KeyboardEvent("keyup", opts));
-      return { pressed: k };
-    },
-    args: [key ?? "", ref ?? "", selector ?? ""],
+    func: dispatchSyntheticKeys,
+    args: [syntheticKeyEvents(combo), ref ?? "", selector ?? ""],
   });
   return r?.result;
 }
@@ -1916,14 +2490,28 @@ async function injectEval(tabId, code, world = "MAIN", opts = {}) {
       try {
         return { ok: true, value: eval(c) };
       } catch (e) {
-        return { ok: false, error: e.message, stack: e.stack };
+        return { ok: false, error: e.message, errorName: e.name, stack: e.stack };
       }
     },
     args: [code],
     world,
   });
   const res = unwrapInjectionResults(results, (result) => result?.ok);
-  if (res && !res.ok) throw new Error(res.error);
+  if (res && !res.ok) {
+    if (!isEvalBlockedError(res)) throw new Error(res.error);
+    const topFrameOnly = !target.allFrames && (!target.frameIds || target.frameIds[0] === 0);
+    if (world !== "MAIN" || !topFrameOnly) {
+      throw new Error(
+        `${res.error} (the page blocks eval; Carrot can retry through the debugger only in the MAIN world of the top frame)`
+      );
+    }
+    try {
+      return await evaluateWithDebugger(tabId, code);
+    } catch (e) {
+      if (e?.thrownByScript) throw e;
+      throw new Error(`${res.error} (the page blocks eval, and the debugger fallback failed: ${e?.message || e})`);
+    }
+  }
   return res?.value;
 }
 

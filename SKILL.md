@@ -119,6 +119,10 @@ All interaction commands accept `ref` (preferred, from readPage/find) OR `select
 {"type": "formInput", "ref": "ref_7", "value": "option_value"}
 ```
 
+On a `<select>`, the returned `value` is read about 150 ms after the change
+event, so React-controlled selects report the value they settled on. If the
+select was replaced or the page navigated, the result has `"settled": false`.
+
 **fillContentEditable** — Fill rich text editors (Slack, Gmail compose, etc.). Auto-scrolls to find the element.
 
 ```json
@@ -138,20 +142,38 @@ All interaction commands accept `ref` (preferred, from readPage/find) OR `select
 {"type": "scroll", "ref": "ref_10", "direction": "up"}
 ```
 
-**press** — Send a keyboard key.
+**press**: Press a key or shortcut as trusted input (through the Chrome debugger).
 
 ```json
 {"type": "press", "key": "Enter"}
 {"type": "press", "key": "Tab", "ref": "ref_5"}
+{"type": "press", "key": "Shift+Tab"}
+{"type": "press", "key": "Meta+v", "ref": "ref_12"}
 ```
+
+Combine modifiers with `+` (`Shift`, `Control`/`Ctrl`, `Alt`/`Option`,
+`Meta`/`Cmd`); `Mod+` means Meta on macOS and Control elsewhere. On macOS,
+`Meta+a`, `Meta+c`, `Meta+x`, `Meta+v`, `Meta+z`, and `Shift+Meta+z` perform
+select all, copy, cut, paste, undo, and redo. With `ref` or `selector`, the
+element is focused first. If the debugger is unavailable, or the element cannot
+take focus, Carrot falls back to synthetic events; `method` in the result says
+which ran.
 
 ### Navigation
 
 ```json
 {"type": "navigate", "url": "https://example.com"}
+{"type": "navigate", "url": "https://example.com", "waitUntil": "domcontentloaded", "timeoutMs": 30000}
 {"type": "goBack"}
 {"type": "goForward"}
 ```
+
+`navigate`, `goBack`, `goForward`, `reloadTab`, and `createTab` wait until the
+new page has loaded before returning, so the next command runs against the new
+document. `waitUntil` is `load` (default), `domcontentloaded`, or `none`;
+`timeoutMs` defaults to 20000. The result has the final `url`, `title`,
+`status`, and `loaded`, plus `timedOut` or `navigationError` when the load did
+not finish.
 
 ### Tab Management
 
@@ -196,11 +218,20 @@ First call with `install: true`, subsequent calls without it to read new message
 
 ```
 GET /screenshot
-GET /screenshot?tabId=123
+GET /screenshot?tabId=123&maxWidth=1280
 ```
 
-Returns a screenshot as a data URL. Pass `tabId` to target a specific tab;
-otherwise it captures the visible tab.
+Returns a screenshot as a data URL with the image `width` and `height`, the CSS
+`viewport` (`width`, `height`, `devicePixelRatio`, `scrollX`, `scrollY`), and
+`cssPixelsPerImagePixel`. Pass `tabId` to target a specific tab; otherwise it
+captures the visible tab. `maxWidth` downscales the image, never wider than the
+CSS viewport. To click something you see in the image, multiply its image
+coordinates by `cssPixelsPerImagePixel` and send `clickAt` with
+`"coordinateSpace": "viewport"`.
+
+The MCP `take_screenshot` tool returns the image as MCP image content, 1280 px
+wide at most by default (`max_width`, 0 for full resolution), plus the same
+viewport details as text.
 
 ### JS Execution
 
@@ -209,7 +240,10 @@ POST /execute
 {"script": "document.title", "tabId": 12345}
 ```
 
-May fail on Trusted Types sites (YouTube, etc.). Prefer readPage + click/type for interaction.
+If the page's Content Security Policy blocks eval (claude.ai, for example), the
+top frame is retried through the Chrome debugger (`Runtime.evaluate`), which
+also awaits promises. Frame-targeted and ISOLATED-world scripts have no such
+fallback. Prefer readPage + click/type for interaction.
 
 ### Info Endpoints (GET)
 

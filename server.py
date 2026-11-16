@@ -24,7 +24,9 @@ import asyncio
 import hashlib
 import html
 import json
+import logging
 import os
+import re
 import secrets
 import string
 import time
@@ -43,6 +45,7 @@ from starlette.routing import Mount
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import StreamableHTTPSessionManager, StreamableHTTPASGIApp
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ImageContent, TextContent
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -53,7 +56,80 @@ SESSION_TTL = int(os.environ.get("CARROT_SESSION_TTL", "28800"))
 PAIRING_TTL = int(os.environ.get("CARROT_PAIRING_TTL", "300"))
 RESULT_TTL = 300
 PAIRING_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no O/0/I/1/l
+NAV_COMMANDS = {"navigate", "createTab", "reloadTab", "goBack", "goForward"}
+NAV_WAIT_MODES = ("load", "domcontentloaded", "none")
+NAV_DEFAULT_TIMEOUT_MS = 20000
+NAV_TIMEOUT_MARGIN_S = 10.0
 SERVICE_STARTED_AT = time.time()
+
+# ---------------------------------------------------------------------------
+# Log redaction
+# ---------------------------------------------------------------------------
+
+# The extension authenticates its WebSocket with ?browser_token=..., and uvicorn
+# logs every request path with its query string.
+SECRET_QUERY_PARAMS = (
+    "browser_token", "session_token", "access_token", "refresh_token", "id_token",
+    "token", "api_key", "apikey", "key", "secret", "password", "auth", "authorization",
+)
+_SECRET_PARAM_RE = re.compile(
+    r"(?<![\w.-])(" + "|".join(SECRET_QUERY_PARAMS) + r")=(?:\"[^\"]*\"|'[^']*'|[^&\s\"'#]*)",
+    re.IGNORECASE,
+)
+
+
+def redact_secrets(text: str) -> str:
+    return _SECRET_PARAM_RE.sub(r"\1=[REDACTED]", text)
+
+
+def _redact_arg(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if value is None or isinstance(value, (int, float, bytes)):
+        return value
+    # URL objects and similar format through str().
+    text = str(value)
+    redacted = redact_secrets(text)
+    return value if redacted == text else redacted
+
+
+def _redact_args(args: Any) -> Any:
+    if isinstance(args, tuple):
+        return tuple(_redact_arg(a) for a in args)
+    if isinstance(args, dict):
+        return {k: _redact_arg(v) for k, v in args.items()}
+    return args
+
+
+# A record factory rather than a logger filter, so it covers every logger
+# (uvicorn.access, uvicorn.error, the app, libraries) whatever order uvicorn
+# configures logging in. The %-template in record.msg is never rewritten, since
+# names like key= or token= in a template would break formatting. Redacting the
+# args is preferred because uvicorn's access formatter unpacks record.args.
+_base_record_factory = logging.getLogRecordFactory()
+
+
+def _redacting_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+    record = _base_record_factory(*args, **kwargs)
+    try:
+        message = record.getMessage()
+    except Exception:
+        return record
+    redacted = redact_secrets(message)
+    if redacted == message:
+        return record
+    record.args = _redact_args(record.args)
+    try:
+        partly = record.getMessage()
+        clean = redact_secrets(partly) == partly
+    except Exception:
+        clean = False
+    if not clean:
+        record.msg, record.args = redacted, None
+    return record
+
+
+logging.setLogRecordFactory(_redacting_record_factory)
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -214,6 +290,57 @@ def _apply_scope(session: Session | None, cmd_type: str, params: dict) -> dict:
         return scoped
 
     return params
+
+
+def _nav_timeout(timeout_ms: Any) -> float:
+    """Bridge-side timeout for a navigation command that waits up to timeout_ms in the browser."""
+    try:
+        ms = float(timeout_ms) if timeout_ms is not None else NAV_DEFAULT_TIMEOUT_MS
+    except (TypeError, ValueError):
+        ms = NAV_DEFAULT_TIMEOUT_MS
+    return max(ms, 0) / 1000 + NAV_TIMEOUT_MARGIN_S
+
+
+def _nav_kwargs(wait_until: str, timeout_ms: int) -> dict:
+    if wait_until not in NAV_WAIT_MODES:
+        raise ValueError(f"wait_until must be one of: {', '.join(NAV_WAIT_MODES)}")
+    return {"waitUntil": wait_until, "timeoutMs": timeout_ms}
+
+
+def _screenshot_content(result: Any) -> list[ImageContent | TextContent]:
+    """Turn the extension's screenshot result into MCP image content plus coordinate notes."""
+    if not isinstance(result, dict) or not str(result.get("dataUrl", "")).startswith("data:"):
+        return [TextContent(type="text", text=f"Screenshot failed: unexpected result {str(result)[:200]}")]
+    header, _, data = result["dataUrl"].partition(",")
+    mime_type = header[len("data:"):].split(";")[0] or "image/png"
+    lines = []
+    if result.get("tabId") is not None:
+        lines.append(f"Screenshot of tab {result['tabId']}.")
+    width, height = result.get("width"), result.get("height")
+    if width and height:
+        lines.append(f"Image size: {width}x{height} px.")
+    viewport = result.get("viewport")
+    scale = result.get("cssPixelsPerImagePixel")
+    if isinstance(viewport, dict) and viewport.get("width") and scale:
+        lines.append(
+            f"Viewport: {viewport['width']}x{viewport['height']} CSS px, "
+            f"devicePixelRatio {viewport.get('devicePixelRatio')}, "
+            f"scroll ({viewport.get('scrollX', 0)}, {viewport.get('scrollY', 0)})."
+        )
+        lines.append(
+            f"One image pixel is {round(scale, 4)} CSS px. For click_at, multiply image x and y by "
+            f"{round(scale, 4)} and pass coordinate_space=\"viewport\", or also add the scroll offset "
+            f"for the default page coordinates."
+        )
+    else:
+        lines.append(
+            "Viewport size is unavailable (restricted page or extension older than 0.5.2), "
+            "so the image may be at device resolution."
+        )
+    return [
+        ImageContent(type="image", data=data, mimeType=mime_type),
+        TextContent(type="text", text=" ".join(lines)),
+    ]
 
 
 def _agent_payload(session: Session | None) -> dict | None:
@@ -513,7 +640,12 @@ async def cmd(
     cmd_type = body.pop("type", None)
     if not cmd_type:
         raise HTTPException(400, "type is required")
-    timeout = float(body.pop("_timeout", 30))
+    if "_timeout" in body:
+        timeout = float(body.pop("_timeout"))
+    elif cmd_type in NAV_COMMANDS and body.get("waitUntil") != "none":
+        timeout = max(30.0, _nav_timeout(body.get("timeoutMs")))
+    else:
+        timeout = 30.0
     return await _send_and_wait(browser_id, cmd_type, body, session, timeout)
 
 
@@ -533,7 +665,11 @@ async def navigate(
     kwargs = {"url": url}
     if body.get("tabId"):
         kwargs["tabId"] = body["tabId"]
-    return await _send_and_wait(browser_id, "navigate", kwargs, session)
+    for key in ("waitUntil", "timeoutMs"):
+        if body.get(key) is not None:
+            kwargs[key] = body[key]
+    timeout = max(30.0, _nav_timeout(kwargs.get("timeoutMs")))
+    return await _send_and_wait(browser_id, "navigate", kwargs, session, timeout)
 
 
 @app.post("/execute")
@@ -689,6 +825,7 @@ async def screenshot(
     windowId: int | None = None,
     tabId: int | None = None,
     format: str | None = None,
+    maxWidth: int | None = None,
 ):
     kwargs = {}
     if tabId is not None:
@@ -697,6 +834,8 @@ async def screenshot(
         kwargs["windowId"] = windowId
     if format:
         kwargs["format"] = format
+    if maxWidth is not None:
+        kwargs["maxWidth"] = maxWidth
     return await _send_and_wait(browser_id, "screenshot", kwargs, session)
 
 
@@ -932,7 +1071,7 @@ agents should prefer `POST /cmd` for the complete command surface.
 
 | Route | Equivalent command | Notes |
 |---|---|---|
-| `POST /navigate` | `navigate` | Body: `url`, optional `tabId`. |
+| `POST /navigate` | `navigate` | Body: `url`, optional `tabId`, `waitUntil`, `timeoutMs`. Waits for the page to load. |
 | `POST /execute` | `execute` | Body: `script`, optional `tabId`, `world`. |
 | `POST /click` | `click` | Body: `selector`, optional `index`, `tabId`. |
 | `POST /query` | `query` | Body: `selector`, optional `limit`, `tabId`. |
@@ -941,7 +1080,7 @@ agents should prefer `POST /cmd` for the complete command surface.
 | `POST /close` | `closeTab` | Body: `tabId`. |
 | `GET /tabs` | `tabs` | Lists tabs, constrained by session scope. |
 | `GET /focused` | `focused` | Active tab in the last-focused window/scope. |
-| `GET /screenshot` | `screenshot` | Query: optional `windowId`, `tabId`, `format`. |
+| `GET /screenshot` | `screenshot` | Query: optional `windowId`, `tabId`, `format`, `maxWidth`. |
 | `GET /windows` | `getWindows` | Lists browser windows and their tabs. |
 | `GET /groups` | `queryGroups` | Query: optional `windowId`. |
 | `GET /history` | `searchHistory` | Query: `q`, `maxResults`, optional `startTime`. |
@@ -987,7 +1126,7 @@ available. Many also accept `tabId`.
 | `formInput` | `value`; optional `ref`, `selector`, `tabId`, `frameId`, `frameSelector`, `allFrames` | Set input/select/checkbox/radio/textarea values directly. |
 | `fillContentEditable` | `text`; optional `ref`, `selector`, `maxScrolls`, `tabId`, `frameId`, `frameSelector`, `allFrames` | Fill rich text/contenteditable editors. |
 | `scroll` | optional `direction`, `amount`, `ref`, `selector`, `tabId` | Scroll page or element. Directions: `up`, `down`, `left`, `right`. |
-| `press` | `key`; optional `ref`, `selector`, `tabId` | Send a key press such as `Enter`, `Tab`, `Escape`, or `ArrowDown`. |
+| `press` | `key`; optional `ref`, `selector`, `tabId` | Press a key or shortcut as trusted input through the debugger, such as `Enter`, `Tab`, `ArrowDown`, `Shift+Tab`, or `Meta+v`. `Mod+` means Meta on macOS and Control elsewhere. On macOS, `Meta+a/c/x/v/z` and `Shift+Meta+z` perform select all, copy, cut, paste, undo, and redo. With `ref` or `selector`, the element is focused first. Falls back to synthetic events when the debugger is unavailable; `method` in the result says which ran. |
 | `resolveFrame` | `frameSelector`; optional `frameIndex`, `tabId` | Resolve an iframe CSS selector to a Chrome `frameId`. |
 | `clickAt` | `x`, `y`; optional `tabId`, `coordinateSpace`, `scrollIntoView` | Click absolute page coordinates through the debugger protocol. |
 
@@ -999,16 +1138,28 @@ Examples:
 {"type":"clickAt","x":283,"y":497}
 {"type":"formInput","ref":"ref_7","value":"hello@example.com"}
 {"type":"press","key":"Enter"}
+{"type":"press","key":"Meta+v","ref":"ref_12"}
 ```
+
+`formInput` on a `<select>` reads the value again about 150 ms after the change
+event, so a React-controlled select reports the value it settled on. If the
+select is replaced or the page navigates, the result has `"settled": false`.
 
 ### Navigation and JavaScript
 
+`navigate`, `goBack`, `goForward`, `reloadTab`, and `createTab` wait for the new
+document before returning. `waitUntil` is `load` (default), `domcontentloaded`,
+or `none`; `timeoutMs` defaults to 20000. The result includes the final `url`,
+`title`, `status`, `loaded`, and `timedOut` or `navigationError` when the load
+did not finish. Through `/cmd`, the bridge timeout grows with `timeoutMs`
+unless you pass `_timeout`.
+
 | Command | Parameters | Description |
 |---|---|---|
-| `navigate` | `url`; optional `tabId` | Navigate a tab. |
-| `goBack` | optional `tabId` | Navigate back. |
-| `goForward` | optional `tabId` | Navigate forward. |
-| `execute` | `script`; optional `tabId`, `world`, `frameId`, `frameSelector`, `allFrames` | Execute JavaScript in the page. Prefer page actions for normal interaction. |
+| `navigate` | `url`; optional `tabId`, `waitUntil`, `timeoutMs` | Navigate a tab and wait for the page to load. |
+| `goBack` | optional `tabId`, `waitUntil`, `timeoutMs` | Navigate back and wait. |
+| `goForward` | optional `tabId`, `waitUntil`, `timeoutMs` | Navigate forward and wait. |
+| `execute` | `script`; optional `tabId`, `world`, `frameId`, `frameSelector`, `allFrames` | Execute JavaScript in the page. If the page's Content Security Policy blocks eval, the top frame in the MAIN world is retried through the debugger (`Runtime.evaluate`). Prefer page actions for normal interaction. |
 | `executeInFrame` | `script`; `frameId` or `frameSelector`; optional `tabId`, `world` | Alias command for frame-targeted JavaScript execution via `/cmd`. |
 
 Examples:
@@ -1026,9 +1177,9 @@ Examples:
 | `focused` | optional `tabId`, `windowId` | Return focused tab context. |
 | `tabs` | optional `tabId`, `windowId` | List tabs or return one tab. |
 | `activateTab` | `tabId` | Focus Chrome and activate a tab. |
-| `createTab` | optional `url`, `active`, `pinned`, `index`, `windowId` | Create a tab. |
+| `createTab` | optional `url`, `active`, `pinned`, `index`, `windowId`, `waitUntil`, `timeoutMs` | Create a tab and wait for it to load. |
 | `closeTab` | optional `tabId` | Close a tab; defaults to active scoped tab where allowed. |
-| `reloadTab` | optional `tabId`, `bypassCache` | Reload a tab. |
+| `reloadTab` | optional `tabId`, `bypassCache`, `waitUntil`, `timeoutMs` | Reload a tab and wait for it to load. |
 | `duplicateTab` | optional `tabId` | Duplicate a tab. |
 | `pinTab` | optional `tabId`, `pinned` | Pin or unpin a tab. |
 | `muteTab` | optional `tabId`, `muted` | Mute or unmute a tab. |
@@ -1078,12 +1229,19 @@ Example:
 
 | Command | Parameters | Description |
 |---|---|---|
-| `screenshot` | optional `windowId`, `tabId`, `format`, `quality` | Capture visible tab or a specific tab. `format` defaults to `png`; `quality` defaults to 90. |
+| `screenshot` | optional `windowId`, `tabId`, `format`, `quality`, `maxWidth` | Capture visible tab or a specific tab. `format` defaults to `png`; `quality` defaults to 90. With `maxWidth`, the image is downscaled to at most that width and never wider than the CSS viewport. |
+
+The result has `dataUrl`, the image `width` and `height`, `viewport` (CSS
+`width`, `height`, `devicePixelRatio`, `scrollX`, `scrollY`), and
+`cssPixelsPerImagePixel`. Multiply image coordinates by that factor to get
+viewport coordinates for `clickAt` with `"coordinateSpace":"viewport"`, or add
+the scroll offset as well for page coordinates. The MCP `take_screenshot` tool
+returns MCP image content and downscales to 1280 px by default.
 
 Example:
 
 ```json
-{"type":"screenshot","tabId":123,"format":"png"}
+{"type":"screenshot","tabId":123,"format":"png","maxWidth":1280}
 ```
 
 ### Debugging
@@ -1687,7 +1845,9 @@ async def type_text(text: str, ref: str | None = None, selector: str | None = No
 
 @mcp_server.tool()
 async def form_input(value: str, ref: str | None = None, selector: str | None = None, tab_id: int | None = None, frame_id: int | None = None, frame_selector: str | None = None) -> str:
-    """Set a form field value directly. Works with select, checkbox, radio, input, textarea, contenteditable."""
+    """Set a form field value directly. Works with select, checkbox, radio, input, textarea, contenteditable.
+    For a select, the returned value is read again shortly after the change event, so a
+    React-controlled select reports the value it settled on."""
     kwargs: dict = {"value": value}
     if ref:
         kwargs["ref"] = ref
@@ -1736,7 +1896,10 @@ async def scroll_page(direction: str = "down", amount: int | None = None, ref: s
 
 @mcp_server.tool()
 async def press_key(key: str, ref: str | None = None, selector: str | None = None, tab_id: int | None = None) -> str:
-    """Send a keyboard key press (Enter, Tab, Escape, ArrowDown, etc.)."""
+    """Press a key or shortcut as trusted input: Enter, Tab, Escape, ArrowDown, a, Shift+Tab,
+    Meta+v, Control+a. "Mod+..." means Meta on macOS and Control elsewhere. On macOS,
+    Meta+a/c/x/v/z and Shift+Meta+z perform select all, copy, cut, paste, undo and redo.
+    With ref or selector, the element is focused first."""
     kwargs: dict = {"key": key}
     if ref:
         kwargs["ref"] = ref
@@ -1747,31 +1910,34 @@ async def press_key(key: str, ref: str | None = None, selector: str | None = Non
     return str(await _mcp_cmd("press", **kwargs))
 
 
-@mcp_server.tool()
-async def navigate_to(url: str, tab_id: int | None = None) -> str:
-    """Navigate the active tab (or a specific tab) to a URL."""
-    kwargs: dict = {"url": url}
+NAV_WAIT_DOC = (
+    "Waits for the new page to load (wait_until=\"load\", default; \"domcontentloaded\"; or \"none\" "
+    "to return immediately) for up to timeout_ms, then returns the final url, title, and loaded/timedOut."
+)
+
+
+@mcp_server.tool(description=f"Navigate the active tab (or a specific tab) to a URL. {NAV_WAIT_DOC}")
+async def navigate_to(url: str, tab_id: int | None = None, wait_until: str = "load", timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS) -> str:
+    kwargs: dict = {"url": url, **_nav_kwargs(wait_until, timeout_ms)}
     if tab_id is not None:
         kwargs["tabId"] = tab_id
-    return str(await _mcp_cmd("navigate", **kwargs))
+    return str(await _mcp_cmd("navigate", timeout=_nav_timeout(timeout_ms), **kwargs))
 
 
-@mcp_server.tool()
-async def go_back(tab_id: int | None = None) -> str:
-    """Go back in browser history."""
-    kwargs: dict = {}
+@mcp_server.tool(description=f"Go back in browser history. {NAV_WAIT_DOC}")
+async def go_back(tab_id: int | None = None, wait_until: str = "load", timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS) -> str:
+    kwargs: dict = _nav_kwargs(wait_until, timeout_ms)
     if tab_id is not None:
         kwargs["tabId"] = tab_id
-    return str(await _mcp_cmd("goBack", **kwargs))
+    return str(await _mcp_cmd("goBack", timeout=_nav_timeout(timeout_ms), **kwargs))
 
 
-@mcp_server.tool()
-async def go_forward(tab_id: int | None = None) -> str:
-    """Go forward in browser history."""
-    kwargs: dict = {}
+@mcp_server.tool(description=f"Go forward in browser history. {NAV_WAIT_DOC}")
+async def go_forward(tab_id: int | None = None, wait_until: str = "load", timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS) -> str:
+    kwargs: dict = _nav_kwargs(wait_until, timeout_ms)
     if tab_id is not None:
         kwargs["tabId"] = tab_id
-    return str(await _mcp_cmd("goForward", **kwargs))
+    return str(await _mcp_cmd("goForward", timeout=_nav_timeout(timeout_ms), **kwargs))
 
 
 @mcp_server.tool()
@@ -1792,13 +1958,12 @@ async def activate_tab(tab_id: int) -> str:
     return str(await _mcp_cmd("activateTab", tabId=tab_id))
 
 
-@mcp_server.tool()
-async def create_tab(url: str | None = None, active: bool = True, tab_id: int | None = None) -> str:
-    """Create a new browser tab."""
-    kwargs: dict = {"active": active}
+@mcp_server.tool(description=f"Create a new browser tab. {NAV_WAIT_DOC}")
+async def create_tab(url: str | None = None, active: bool = True, tab_id: int | None = None, wait_until: str = "load", timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS) -> str:
+    kwargs: dict = {"active": active, **_nav_kwargs(wait_until, timeout_ms)}
     if url:
         kwargs["url"] = url
-    return str(await _mcp_cmd("createTab", **kwargs))
+    return str(await _mcp_cmd("createTab", timeout=_nav_timeout(timeout_ms), **kwargs))
 
 
 @mcp_server.tool()
@@ -1807,13 +1972,12 @@ async def close_browser_tab(tab_id: int) -> str:
     return str(await _mcp_cmd("closeTab", tabId=tab_id))
 
 
-@mcp_server.tool()
-async def reload_tab(tab_id: int | None = None, bypass_cache: bool = False) -> str:
-    """Reload a tab. Optionally bypass cache."""
-    kwargs: dict = {"bypassCache": bypass_cache}
+@mcp_server.tool(description=f"Reload a tab. Optionally bypass cache. {NAV_WAIT_DOC}")
+async def reload_tab(tab_id: int | None = None, bypass_cache: bool = False, wait_until: str = "load", timeout_ms: int = NAV_DEFAULT_TIMEOUT_MS) -> str:
+    kwargs: dict = {"bypassCache": bypass_cache, **_nav_kwargs(wait_until, timeout_ms)}
     if tab_id is not None:
         kwargs["tabId"] = tab_id
-    return str(await _mcp_cmd("reloadTab", **kwargs))
+    return str(await _mcp_cmd("reloadTab", timeout=_nav_timeout(timeout_ms), **kwargs))
 
 
 @mcp_server.tool()
@@ -1842,20 +2006,26 @@ async def click_at(x: float, y: float, tab_id: int | None = None, coordinate_spa
 
 
 @mcp_server.tool()
-async def take_screenshot(window_id: int | None = None, tab_id: int | None = None) -> str:
-    """Capture a screenshot. Pass tab_id to target a specific tab."""
-    kwargs: dict = {}
+async def take_screenshot(window_id: int | None = None, tab_id: int | None = None, max_width: int = 1280):
+    """Capture a screenshot of the visible viewport and return it as an image. Pass tab_id to
+    target a specific tab. The image is downscaled to at most max_width px and never wider than
+    the CSS viewport (pass 0 for full device resolution). The text part gives the CSS viewport
+    size, devicePixelRatio, scroll offset, and the factor that maps image pixels to click_at
+    coordinates."""
+    kwargs: dict = {"maxWidth": max_width}
     if tab_id is not None:
         kwargs["tabId"] = tab_id
     if window_id is not None:
         kwargs["windowId"] = window_id
-    return str(await _mcp_cmd("screenshot", **kwargs))
+    return _screenshot_content(await _mcp_cmd("screenshot", **kwargs))
 
 
 @mcp_server.tool()
 async def execute_js(script: str, tab_id: int | None = None, frame_id: int | None = None, frame_selector: str | None = None) -> str:
-    """Execute JavaScript in the page. May fail on Trusted Types sites.
-    Prefer read_page + click/type for standard interaction."""
+    """Execute JavaScript in the page's MAIN world and return the value of the last expression.
+    On pages whose Content Security Policy blocks eval, the top frame is retried through the
+    Chrome debugger (Runtime.evaluate), which also awaits promises. Frame-targeted scripts have
+    no such fallback. Prefer read_page + click/type for standard interaction."""
     kwargs: dict = {"script": script}
     if tab_id is not None:
         kwargs["tabId"] = tab_id
