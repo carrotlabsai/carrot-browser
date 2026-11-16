@@ -1022,14 +1022,14 @@ async function pressKey(tabId, key, ref, selector) {
     // Trusted key events go to the focused element, so a target that cannot
     // take focus only receives the old synthetic events.
     if (!focus.focused) {
-      return { ...(await injectPress(tabId, key, ref, selector)), method: "synthetic", reason: "target cannot take focus" };
+      return { ...(await injectPress(tabId, combo, ref, selector)), pressed: key, method: "synthetic", reason: "target cannot take focus" };
     }
   }
   try {
     await dispatchKeyComboWithDebugger(tabId, combo);
   } catch (e) {
-    const fallback = await injectPress(tabId, key, ref, selector);
-    return { ...fallback, method: "synthetic", reason: `debugger unavailable: ${e?.message || e}` };
+    const fallback = await injectPress(tabId, combo, ref, selector);
+    return { ...fallback, pressed: key, method: "synthetic", reason: `debugger unavailable: ${e?.message || e}` };
   }
   const result = { pressed: key, method: "debugger" };
   if (combo.commands.length) result.commands = combo.commands;
@@ -2307,25 +2307,29 @@ async function injectScroll(tabId, ref, selector, direction, amount) {
   return r?.result;
 }
 
-async function injectPress(tabId, key, ref, selector) {
+async function injectPress(tabId, combo, ref, selector) {
+  const event = {
+    key: combo.description.key,
+    code: combo.description.code,
+    shiftKey: combo.modifiers.includes("Shift"),
+    ctrlKey: combo.modifiers.includes("Control"),
+    altKey: combo.modifiers.includes("Alt"),
+    metaKey: combo.modifiers.includes("Meta"),
+  };
   const [r] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (k, rf, sel) => {
+    func: (ev, rf, sel) => {
       let target = document.activeElement || document;
       if (rf && window.__carrotRefs && window.__carrotRefs[rf]) target = window.__carrotRefs[rf];
       else if (sel) target = document.querySelector(sel) || document;
 
-      const opts = { key: k, bubbles: true, cancelable: true };
-      if (k === "Enter") opts.keyCode = 13;
-      if (k === "Escape") opts.keyCode = 27;
-      if (k === "Tab") opts.keyCode = 9;
-
+      const opts = { ...ev, bubbles: true, cancelable: true };
       target.dispatchEvent(new KeyboardEvent("keydown", opts));
       target.dispatchEvent(new KeyboardEvent("keypress", opts));
       target.dispatchEvent(new KeyboardEvent("keyup", opts));
-      return { pressed: k };
+      return { pressed: ev.key };
     },
-    args: [key ?? "", ref ?? "", selector ?? ""],
+    args: [event, ref ?? "", selector ?? ""],
   });
   return r?.result;
 }
